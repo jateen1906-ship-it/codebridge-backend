@@ -77,4 +77,19 @@ All Gateway error responses and normalized downstream errors follow this structu
 
 - `X-Request-ID` — Validated canonical UUIDv4 request trace ID generated at `api-gateway` if missing or invalid, attached to request state, propagated downstream over HTTPX, logged in structured JSON logs, and returned in every response.
 - `Content-Type: application/json` — Standard payload content type.
-- `Authorization: Bearer <token>` — Forwarded for future authentication handling at `identity-service` / `api-gateway`.
+- `Authorization: Bearer <token>` — Forwarded for authentication handling across `api-gateway` -> microservices (`identity-service`, `project-service`, etc.).
+
+## 6. Implemented Domain Endpoints — Project Service (Phase 3)
+
+Routed through API Gateway `/api/v1/projects` -> `project-service` (`:8002`) without stripping `/api/v1` (note `/api/v1/projects/{project_id}/github/...` retains higher routing priority for `github-service`):
+
+| Method | Path | Role Required | Success Status | Key Error Codes |
+| :--- | :--- | :--- | :---: | :--- |
+| `POST` | `/api/v1/projects` | `OWNER` | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `VALIDATION_ERROR`, `IDENTITY_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/projects` | Any authenticated (`OWNER`, `FREELANCER`, `ADMIN`) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `VALIDATION_ERROR`, `IDENTITY_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/projects/{project_id}` | Scoped (`OWNER` own, `FREELANCER` `OPEN`/assigned, `ADMIN` all) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `IDENTITY_SERVICE_UNAVAILABLE` |
+| `PATCH` | `/api/v1/projects/{project_id}` | `OWNER` (must own project, `OPEN` unassigned) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INVALID_PROJECT_STATUS`, `VALIDATION_ERROR` |
+| `POST` | `/api/v1/projects/{project_id}/publish` | `OWNER` (must own project) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INVALID_PROJECT_STATUS`, `VALIDATION_ERROR` |
+| `POST` | `/api/v1/projects/{project_id}/cancel` | `OWNER` (must own unassigned `OPEN` project) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INVALID_PROJECT_STATUS` |
+| `POST` | `/api/v1/projects/{project_id}/select-freelancer` | `OWNER` (must own unassigned `OPEN` project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `FREELANCER_NOT_FOUND`, `INVALID_FREELANCER`, `PROJECT_ALREADY_ASSIGNED`, `INVALID_PROJECT_STATUS`, `CONCURRENT_ASSIGNMENT_CONFLICT`, `IDENTITY_SERVICE_UNAVAILABLE` |
+
