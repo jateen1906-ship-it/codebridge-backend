@@ -1,0 +1,3 @@
+# Independent Python dependencies for observability-service
+# Phase 0 placeholder — service-specific dependencies will be pinned during implementation.
+# Planned core libraries: fastapi, uvicorn, httpx, pydantic, pytest

@@ -1,0 +1,24 @@
+# ==============================================================================
+# CodeBridge Backend — Docker Compose Configuration (Phase 0 Placeholder)
+# ==============================================================================
+# Phase 0 initializes the monorepo structure only.
+# Service containers, PostgreSQL databases, Redis, and monitoring services are
+# NOT configured or started in this phase.
+#
+# Planned services and local ports:
+#   - api-gateway:           8000
+#   - identity-service:      8001
+#   - project-service:       8002
+#   - github-service:        8003
+#   - code-context-service:  8004
+#   - workspace-service:     8005
+#   - review-service:        8006
+#   - verification-service:  8007
+#   - payment-service:       8008
+#   - notification-service:  8009
+#   - admin-service:         8010
+#   - audit-service:         8011
+#   - observability-service: 8012
+
+services: {}
+

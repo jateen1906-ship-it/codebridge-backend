@@ -1,0 +1,1 @@
+"""Admin Service repositories package."""
