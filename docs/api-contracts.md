@@ -93,3 +93,21 @@ Routed through API Gateway `/api/v1/projects` -> `project-service` (`:8002`) wit
 | `POST` | `/api/v1/projects/{project_id}/cancel` | `OWNER` (must own unassigned `OPEN` project) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INVALID_PROJECT_STATUS` |
 | `POST` | `/api/v1/projects/{project_id}/select-freelancer` | `OWNER` (must own unassigned `OPEN` project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `FREELANCER_NOT_FOUND`, `INVALID_FREELANCER`, `PROJECT_ALREADY_ASSIGNED`, `INVALID_PROJECT_STATUS`, `CONCURRENT_ASSIGNMENT_CONFLICT`, `IDENTITY_SERVICE_UNAVAILABLE` |
 
+## 7. Implemented Domain Endpoints — GitHub Service (Phase 4)
+
+Routed through API Gateway `/api/v1/projects/{project_id}/github` *(priority `10`)* and `/api/v1/github` *(priority `100`)* -> `github-service` (`:8003`) without stripping `/api/v1`. Root operational probes `GET /health` and `GET /ready` are also exposed directly by `github-service`.
+
+| Method | Path | Auth / Role Required | Success Status | Key Error Codes |
+| :--- | :--- | :--- | :---: | :--- |
+| `GET` | `/api/v1/github/oauth/authorize` | `OWNER` (must own `project_id`) | `302 Found` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `IDENTITY_SERVICE_UNAVAILABLE`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/github/oauth/callback` | Hashed single-use `state` (optional `OWNER` match if Bearer sent) | `200 OK` / `302 Found` | `INVALID_OAUTH_CALLBACK`, `INVALID_OAUTH_STATE`, `OAUTH_STATE_EXPIRED`, `OAUTH_STATE_ALREADY_USED`, `GITHUB_OAUTH_DENIED`, `GITHUB_CONNECTION_ALREADY_EXISTS`, `GITHUB_OAUTH_FAILED`, `UPSTREAM_TIMEOUT` |
+| `DELETE` | `/api/v1/github/connection` | `OWNER` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `GITHUB_CONNECTION_NOT_FOUND`, `ACTIVE_ASSIGNMENT_CONFLICT`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/github/repositories` | `OWNER` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `GITHUB_CONNECTION_NOT_FOUND`, `VALIDATION_ERROR`, `GITHUB_RATE_LIMITED`, `GITHUB_TOKEN_INVALID`, `UPSTREAM_TIMEOUT` |
+| `POST` | `/api/v1/projects/{project_id}/github/connect` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `GITHUB_CONNECTION_NOT_FOUND`, `PROJECT_ALREADY_CONNECTED`, `REPOSITORY_MISMATCH`, `GITHUB_RESOURCE_NOT_FOUND`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/projects/{project_id}/github/status` | Scoped via Project Service (`OWNER` own, `FREELANCER` `OPEN`/assigned, `ADMIN` all) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `IDENTITY_SERVICE_UNAVAILABLE`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `DELETE` | `/api/v1/projects/{project_id}/github/disconnect` | `OWNER` (must own project) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `PROJECT_REPOSITORY_NOT_FOUND`, `ACTIVE_ASSIGNMENT_CONFLICT`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `GET` | `/api/v1/projects/{project_id}/github/branches` | `OWNER` (must own project) | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `GITHUB_TOKEN_INVALID`, `UPSTREAM_TIMEOUT` |
+| `GET` | `/api/v1/projects/{project_id}/github/contents` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RESOURCE_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
+| `GET` | `/api/v1/projects/{project_id}/github/commits` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
+
+

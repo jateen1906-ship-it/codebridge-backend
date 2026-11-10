@@ -42,12 +42,13 @@ Owns the core project and task lifecycle for software completion workflows.
 - Deadlines
 - Project lifecycle state transitions
 
-### 3. `github-service` (`8003`)
-Owns external source-control integration with GitHub.
-- GitHub OAuth integration
-- Repository connections
-- Repository metadata synchronization
-- Commits and repository access management
+### 3. `github-service` (`8003`) — Implemented (Phase 4)
+Owns external source-control integration with GitHub via **GitHub OAuth App** and read-only GitHub REST APIs (`https://api.github.com`):
+- Single-use CSRF OAuth state initiation & callback exchange (`GET /api/v1/github/oauth/authorize`, `GET /api/v1/github/oauth/callback`)
+- AES-256-GCM encrypted OAuth credential storage bound to `owner_id` (plus account disconnect `DELETE /api/v1/github/connection`)
+- Owner repository discovery (`GET /api/v1/github/repositories`)
+- One-repository-per-project linking & lifecycle management (`POST /api/v1/projects/{project_id}/github/connect`, `DELETE .../disconnect`, `GET .../status`)
+- Bounded read-only repository access (`GET .../branches`, `GET .../contents`, `GET .../commits`) without cloning or workspace mutations
 
 ### 4. `code-context-service` (`8004`)
 Owns repository intelligence, retrieval-augmented code understanding, and repository health insights.
