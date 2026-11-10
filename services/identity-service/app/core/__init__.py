@@ -1,1 +1,1 @@
-"""Identity Service core configuration package."""
+"""Identity Service core configuration, security, database, logging, and error handling."""
