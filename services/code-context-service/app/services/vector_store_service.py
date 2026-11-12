@@ -22,6 +22,17 @@ if TYPE_CHECKING:
 logger = get_logger("services.vector_store")
 
 
+def _coerce_line_int(value: object, default: int = 1) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float, str)):
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
 @dataclass(frozen=True, slots=True)
 class VectorSearchHit:
     """Single retrieved code chunk hit returned from ChromaDB."""
@@ -246,8 +257,8 @@ class VectorStoreService:
                     content=doc_text,
                     file_path=str(meta.get("file_path", "")),
                     language=str(meta.get("language", "text")),
-                    start_line=max(1, int(meta.get("start_line", 1))),
-                    end_line=max(1, int(meta.get("end_line", 1))),
+                    start_line=_coerce_line_int(meta.get("start_line", 1)),
+                    end_line=_coerce_line_int(meta.get("end_line", 1)),
                     chunk_identifier=str(meta.get("chunk_identifier", vec_id)),
                     relevance_score=score,
                 )

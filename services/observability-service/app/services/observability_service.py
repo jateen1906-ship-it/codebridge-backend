@@ -6,6 +6,7 @@ import math
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -161,7 +162,7 @@ class ObservabilityService:
         service_name: str | None = None,
         limit: int = 50,
     ) -> ErrorLogListResponse:
-        filters = [TelemetryRecord.is_error.is_(True)]
+        filters: list[Any] = [TelemetryRecord.is_error.is_(True)]
         if service_name:
             filters.append(TelemetryRecord.service_name == service_name.strip().lower())
 
@@ -184,3 +185,4 @@ class ObservabilityService:
             items=[TelemetryRecordResponse.model_validate(row) for row in rows],
             total=total,
         )
+

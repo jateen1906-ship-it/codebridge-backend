@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -249,7 +250,7 @@ class GitHubServiceClient:
         request_id: str,
         project_id: str,
         operation: str,
-        params: dict[str, object] | None = None,
+        params: Mapping[str, str | int | float | bool | None] | None = None,
         repo_path: str | None = None,
     ) -> httpx.Response:
         client = self._require_client()
@@ -386,7 +387,7 @@ class GitHubServiceClient:
         """Read bounded directory entries or decoded file text via GitHub Service."""
         safe_path = validate_safe_repo_path(path)
         canonical_id = str(uuid.UUID(str(project_id)))
-        params: dict[str, object] = {"path": safe_path}
+        params: dict[str, str] = {"path": safe_path}
         if ref is not None:
             params["ref"] = ref
 

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import base64
+from typing import Any
 
 from app.clients.github_client import GitHubContentNode
 from app.services.file_parser_service import FileParserService
 from tests.conftest import PROJECT_ID
 
 
-def _make_node(**overrides) -> GitHubContentNode:
-    base = {
+def _make_node(**overrides: Any) -> GitHubContentNode:
+    base: dict[str, Any] = {
         "project_id": PROJECT_ID,
         "full_name": "owner/repo",
         "ref": "main",

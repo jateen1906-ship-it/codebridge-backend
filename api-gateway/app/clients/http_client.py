@@ -100,7 +100,7 @@ class GatewayHTTPClient:
             return await self._client.request(
                 method=method,
                 url=url,
-                params=params or None,
+                params=tuple(params) if params else None,
                 content=content,
                 headers=headers,
                 timeout=request_timeout,

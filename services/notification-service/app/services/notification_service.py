@@ -164,7 +164,7 @@ class NotificationService:
             .values(is_read=True, read_at=now)
         )
         await self.session.commit()
-        return int(res.rowcount or 0)
+        return int(getattr(res, "rowcount", 0) or 0)
 
     async def get_preferences(self, *, user_id: uuid.UUID) -> NotificationPreferencesResponse:
         in_app, email, muted, updated = await self._get_or_default_preferences(user_id)

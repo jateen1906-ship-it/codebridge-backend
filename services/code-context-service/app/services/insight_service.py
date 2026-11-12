@@ -7,7 +7,7 @@ import posixpath
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -169,7 +169,7 @@ class InsightService:
         dependency_manifests: list[str] = []
         container_and_ci_configs: list[str] = []
         lint_and_format_configs: list[str] = []
-        large_files: list[dict[str, object]] = []
+        large_files: list[dict[str, Any]] = []
 
         large_threshold = min(32768, max(8192, self._settings.MAX_FILE_BYTES // 2))
 

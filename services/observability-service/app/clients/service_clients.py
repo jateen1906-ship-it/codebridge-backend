@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import time
 import uuid
 
@@ -71,13 +72,13 @@ class ServiceProbeClient:
         self,
         *,
         settings: Settings,
-        transport_map: dict[str, httpx.AsyncBaseTransport] | None = None,
+        transport_map: Mapping[str, httpx.AsyncBaseTransport] | None = None,
     ) -> None:
         self._timeout = httpx.Timeout(
             timeout=settings.OBSERVABILITY_PROBE_TIMEOUT_SECONDS,
             connect=min(2.0, settings.OBSERVABILITY_PROBE_TIMEOUT_SECONDS),
         )
-        self._transport_map = transport_map or {}
+        self._transport_map: dict[str, httpx.AsyncBaseTransport] = dict(transport_map or {})
         self._targets: list[tuple[str, int, str]] = [
             ("api-gateway", 8000, settings.API_GATEWAY_URL),
             ("identity-service", 8001, settings.IDENTITY_SERVICE_URL),
