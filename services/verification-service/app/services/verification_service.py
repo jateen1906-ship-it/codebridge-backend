@@ -27,6 +27,8 @@ from app.models import VerificationEvent, VerificationStatus, VerifiedWorkRecord
 from app.repositories.verification_repository import VerificationRepository
 from app.schemas.verification import (
     CreateVerificationRequest,
+    FreelancerVerificationListResponse,
+    MyVerifiedWorkListResponse,
     ProjectVerificationListResponse,
     PublicVerificationResponse,
     RevokeVerificationRequest,
@@ -287,6 +289,54 @@ class VerificationService:
             items=[self._to_response(r) for r in records],
         )
 
+    def _to_public_response(self, record: VerifiedWorkRecord) -> PublicVerificationResponse:
+        _, sig_valid = verify_payload_signature(
+            canonical_json=record.canonical_payload_json,
+            expected_sha256=record.payload_sha256,
+            signature_hex=record.signature_hex,
+            secret=self.settings.VERIFICATION_SIGNING_SECRET,
+        )
+        is_valid = record.status == VerificationStatus.ACTIVE.value and sig_valid
+        return PublicVerificationResponse(
+            public_verification_id=record.public_verification_id,
+            status=record.status,
+            is_valid=is_valid,
+            signature_valid=sig_valid,
+            project_id=record.project_id,
+            project_title=record.project_title,
+            submission_title=record.submission_title,
+            freelancer_id=record.freelancer_id,
+            repository_full_name=record.repository_full_name,
+            commit_sha=record.commit_sha,
+            approved_at=record.approved_at,
+            issued_at=record.issued_at,
+            revoked_at=record.revoked_at,
+            revocation_reason=record.revocation_reason,
+            payload_sha256=record.payload_sha256,
+            signature_algorithm=record.signature_algorithm,
+            key_id=record.key_id,
+        )
+
+    async def list_my_records(self, *, user: AuthenticatedUser) -> MyVerifiedWorkListResponse:
+        records = await self.repo.list_by_freelancer(user.id, active_only=False)
+        return MyVerifiedWorkListResponse(
+            user_id=user.id,
+            total=len(records),
+            items=[self._to_response(r) for r in records],
+        )
+
+    async def list_freelancer_public_records(
+        self,
+        *,
+        freelancer_id: uuid.UUID,
+    ) -> FreelancerVerificationListResponse:
+        records = await self.repo.list_by_freelancer(freelancer_id, active_only=True)
+        return FreelancerVerificationListResponse(
+            freelancer_id=freelancer_id,
+            total=len(records),
+            items=[self._to_public_response(r) for r in records],
+        )
+
     async def verify_record(self, *, record_id: uuid.UUID) -> VerificationCheckResponse:
         record = await self.repo.get_by_id(record_id)
         if record is None:
@@ -361,3 +411,4 @@ class VerificationService:
             request_id=request_id,
         )
         return self._to_response(updated)
+

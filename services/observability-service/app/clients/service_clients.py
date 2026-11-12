@@ -115,9 +115,7 @@ class ServiceProbeClient:
                 )
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
             health_ok = health_resp.status_code == 200
-            if ready_resp.status_code == 404:
-                ready_state = "unsupported"
-            elif ready_resp.status_code == 200:
+            if ready_resp.status_code == 200:
                 ready_state = "ready"
             else:
                 ready_state = "not_ready"
@@ -130,7 +128,7 @@ class ServiceProbeClient:
                 health_http_status=health_resp.status_code,
                 ready_http_status=ready_resp.status_code,
                 latency_ms=latency_ms,
-                detail=None if (health_ok and ready_state in {"ready", "unsupported"}) else "Probe returned non-200 status.",
+                detail=None if (health_ok and ready_state == "ready") else "Probe returned non-200 status.",
             )
         except httpx.HTTPError as exc:
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -151,3 +149,4 @@ class ServiceProbeClient:
             for name, port, url in self._targets
         ]
         return list(await asyncio.gather(*tasks))
+

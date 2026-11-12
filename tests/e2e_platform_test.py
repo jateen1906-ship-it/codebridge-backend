@@ -8,6 +8,7 @@ Executes the entire 20-step platform lifecycle end-to-end strictly through API G
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -43,6 +44,10 @@ def _make_sample_zip() -> bytes:
         zf.writestr(
             "alice-gh-sample-api-abc1234/app.py",
             'def calculate_payout(amount: float) -> float:\n    """Verify payment settlement calculation."""\n    return round(amount, 2)\n',
+        )
+        zf.writestr(
+            "alice-gh-sample-api-abc1234/test_app.py",
+            "import unittest\nfrom app import calculate_payout\n\nclass TestApp(unittest.TestCase):\n    def test_rounding(self):\n        self.assertEqual(calculate_payout(100.126), 100.13)\n",
         )
     return buf.getvalue()
 
@@ -340,9 +345,14 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
         for name, proc in procs:
             _wait_for_health(urls[name], name, proc)
 
+        # Verify /ready returns HTTP 200 across all 13 services (gateway + 12 microservices)
+        for name, base_url in urls.items():
+            ready_res = httpx.get(f"{base_url}/ready", timeout=5.0)
+            assert ready_res.status_code == 200, f"{name} /ready failed: {ready_res.text}"
+
         gw = urls["api-gateway"]
         with httpx.Client(base_url=gw, timeout=20.0) as client:
-            # Step 1: Register Owner + Freelancer
+            # Step 1: Register Owner + Two Freelancers (assigned + unrelated)
             r_own = client.post(
                 "/api/v1/auth/register",
                 json={
@@ -366,6 +376,17 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
             )
             assert r_fr.status_code == 201, r_fr.text
             freelancer_id = r_fr.json()["id"]
+
+            r_other_fr = client.post(
+                "/api/v1/auth/register",
+                json={
+                    "full_name": "Dana Freelancer",
+                    "email": "dana.e2e@example.com",
+                    "password": "FreelancerPass123!",
+                    "role": "FREELANCER",
+                },
+            )
+            assert r_other_fr.status_code == 201, r_other_fr.text
 
             # Public ADMIN self-registration strictly rejected (403)
             assert (
@@ -396,6 +417,13 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
             assert login_freelancer.status_code == 200, login_freelancer.text
             tok_freelancer = login_freelancer.json()["access_token"]
 
+            login_other_fr = client.post(
+                "/api/v1/auth/login",
+                json={"email": "dana.e2e@example.com", "password": "FreelancerPass123!"},
+            )
+            assert login_other_fr.status_code == 200, login_other_fr.text
+            tok_other_freelancer = login_other_fr.json()["access_token"]
+
             login_admin = client.post(
                 "/api/v1/auth/login",
                 json={"email": "admin.e2e@example.com", "password": "AdminPass123!"},
@@ -405,6 +433,7 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
 
             h_owner = {"Authorization": f"Bearer {tok_owner}"}
             h_freelancer = {"Authorization": f"Bearer {tok_freelancer}"}
+            h_other_freelancer = {"Authorization": f"Bearer {tok_other_freelancer}"}
             h_admin = {"Authorization": f"Bearer {tok_admin}"}
 
             # Step 3 & 4: Owner creates & publishes project
@@ -467,6 +496,16 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
                 == 403
             )
 
+            # Negative Check 5: Unassigned freelancer provisioning a workspace rejected (403)
+            assert (
+                client.post(
+                    f"/api/v1/workspace/projects/{project_id}",
+                    headers=h_freelancer,
+                    json={"auto_start": False},
+                ).status_code
+                == 403
+            )
+
             # Step 7: Owner assigns Freelancer -> Freelancer can now query Code Context RAG
             assign_resp = client.post(
                 f"/api/v1/projects/{project_id}/select-freelancer",
@@ -514,6 +553,19 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
             ref_ws = client.post(f"/api/v1/workspace/{ws_id}/refresh", headers=h_freelancer, json={})
             assert ref_ws.status_code == 200, ref_ws.text
 
+            # Negative Check 1: Other freelancer accessing this project's workspace rejected (403)
+            assert client.get(f"/api/v1/workspace/{ws_id}", headers=h_other_freelancer).status_code == 403
+
+            # Safe automated test execution inside provisioned workspace through API Gateway
+            test_run_resp = client.post(
+                f"/api/v1/workspace/{ws_id}/run-tests",
+                headers=h_freelancer,
+                json={"runner": "unittest", "target_path": "test_app.py", "timeout_seconds": 30},
+            )
+            assert test_run_resp.status_code == 200, test_run_resp.text
+            assert test_run_resp.json()["passed"] is True
+            assert test_run_resp.json()["exit_code"] == 0
+
             # Step 11: Freelancer submits v1 work
             sub1 = client.post(
                 f"/api/v1/submissions/projects/{project_id}",
@@ -546,6 +598,19 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
                     json={"reason": "Should fail before approval"},
                 ).status_code
                 == 409
+            )
+
+            # Negative Check 2: Freelancer approving own submission STRICTLY REJECTED (403)
+            assert (
+                client.post(f"/api/v1/review/submissions/{sub1_id}/start", headers=h_freelancer).status_code == 403
+            )
+            assert (
+                client.post(
+                    f"/api/v1/review/submissions/{sub1_id}/decision",
+                    headers=h_freelancer,
+                    json={"decision": "APPROVED", "feedback": "Self approve attempt", "checklist_passed": True},
+                ).status_code
+                == 403
             )
 
             # Step 13: Owner requests changes -> Freelancer submits v2 -> Owner approves (syncs project to COMPLETED)
@@ -602,14 +667,53 @@ def test_full_platform_20_step_e2e_lifecycle() -> None:
             assert pub_lookup.json()["is_valid"] is True
             assert "owner_id" not in pub_lookup.json()
 
-            # Step 16: Owner releases Escrow -> RELEASED
-            rel_resp = client.post(
-                f"/api/v1/payment/escrows/{escrow_id}/release",
-                headers={**h_owner, "Idempotency-Key": "e2e-release-final"},
-                json={"reason": "Approved final submission v2"},
+            # Freelancer Verified Work Profile via Gateway (/api/v1/profile/verified-work) & public portfolio
+            my_verified = client.get("/api/v1/profile/verified-work", headers=h_freelancer)
+            assert my_verified.status_code == 200, my_verified.text
+            assert my_verified.json()["total"] == 1
+            assert my_verified.json()["items"][0]["public_verification_id"] == pub_ver_id
+
+            pub_portfolio = client.get(f"/api/v1/verification/freelancers/{freelancer_id}")
+            assert pub_portfolio.status_code == 200, pub_portfolio.text
+            assert pub_portfolio.json()["total"] == 1
+
+            # Step 16 & 17a: Open real-time WebSocket via API Gateway before releasing Escrow
+            async def _release_and_receive_ws() -> dict:
+                import websockets
+
+                ws_url = f"ws://127.0.0.1:{ports['api-gateway']}/api/v1/notifications/ws?token={tok_freelancer}"
+                async with websockets.connect(ws_url) as ws:
+                    welcome = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+                    assert welcome["event"] == "connected"
+                    await ws.send("ping")
+                    pong = json.loads(await asyncio.wait_for(ws.recv(), timeout=5.0))
+                    assert pong["event"] == "pong"
+                    async with httpx.AsyncClient(base_url=gw, timeout=20.0) as ac:
+                        rel_resp = await ac.post(
+                            f"/api/v1/payment/escrows/{escrow_id}/release",
+                            headers={**h_owner, "Idempotency-Key": "e2e-release-final"},
+                            json={"reason": "Approved final submission v2"},
+                        )
+                        assert rel_resp.status_code == 200, rel_resp.text
+                        assert rel_resp.json()["status"] == "RELEASED"
+                    while True:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                        frame = json.loads(raw)
+                        if frame.get("event") == "notification.created":
+                            return frame
+
+            ws_frame = asyncio.run(_release_and_receive_ws())
+            assert ws_frame["data"]["event_type"] == "ESCROW_RELEASED"
+
+            # Negative Check 6: Duplicate payment release with a fresh Idempotency-Key strictly rejected (409)
+            assert (
+                client.post(
+                    f"/api/v1/payment/escrows/{escrow_id}/release",
+                    headers={**h_owner, "Idempotency-Key": "e2e-duplicate-release"},
+                    json={"reason": "Duplicate payout attempt"},
+                ).status_code
+                == 409
             )
-            assert rel_resp.status_code == 200, rel_resp.text
-            assert rel_resp.json()["status"] == "RELEASED"
 
             # Step 17: Freelancer & Owner receive Notifications & mark read
             fr_notifs = client.get("/api/v1/notifications", headers=h_freelancer)

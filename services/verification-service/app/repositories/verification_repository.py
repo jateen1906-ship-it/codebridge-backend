@@ -51,8 +51,25 @@ class VerificationRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
+    async def list_by_freelancer(
+        self,
+        freelancer_id: uuid.UUID,
+        *,
+        active_only: bool = False,
+    ) -> list[VerifiedWorkRecord]:
+        stmt = (
+            select(VerifiedWorkRecord)
+            .where(VerifiedWorkRecord.freelancer_id == freelancer_id)
+            .options(selectinload(VerifiedWorkRecord.events))
+            .order_by(VerifiedWorkRecord.issued_at.desc())
+        )
+        if active_only:
+            stmt = stmt.where(VerifiedWorkRecord.status == VerificationStatus.ACTIVE.value)
+        return list((await self.session.execute(stmt)).scalars().all())
+
     def add_record(self, record: VerifiedWorkRecord) -> None:
         self.session.add(record)
 
     def add_event(self, event: VerificationEvent) -> None:
         self.session.add(event)
+

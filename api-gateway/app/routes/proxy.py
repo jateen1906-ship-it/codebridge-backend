@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+import asyncio
+import uuid
+
+from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect, status
+from urllib.parse import urlencode
+import websockets
 
 from app.clients.http_client import GatewayHTTPClient
 from app.clients.service_registry import RouteRule, ServiceRegistry
@@ -74,6 +79,63 @@ def _sanitize_location_header(value: str, base_url: str) -> str:
 def build_proxy_router(registry: ServiceRegistry) -> APIRouter:
     """Build explicit API Gateway proxy routes ordered by specificity."""
     router = APIRouter(tags=["Gateway Proxy"])
+
+    @router.websocket("/notifications/ws")
+    async def proxy_notifications_websocket(websocket: WebSocket) -> None:
+        service_registry: ServiceRegistry = websocket.app.state.service_registry
+        service_def = service_registry.get_service("notification-service")
+        base_url = service_def.base_url.rstrip("/")
+        if base_url.startswith("https://"):
+            ws_base = "wss://" + base_url[len("https://") :]
+        elif base_url.startswith("http://"):
+            ws_base = "ws://" + base_url[len("http://") :]
+        else:
+            ws_base = base_url
+
+        query_items = list(websocket.query_params.multi_items())
+        query_suffix = f"?{urlencode(query_items)}" if query_items else ""
+        upstream_url = f"{ws_base}/api/v1/notifications/ws{query_suffix}"
+
+        request_id = websocket.headers.get("x-request-id") or str(uuid.uuid4())
+        headers: dict[str, str] = {REQUEST_ID_HEADER: request_id}
+        auth = websocket.headers.get("authorization")
+        if auth:
+            headers["Authorization"] = auth
+
+        try:
+            async with websockets.connect(upstream_url, additional_headers=headers) as upstream_ws:
+                await websocket.accept()
+
+                async def client_to_upstream() -> None:
+                    try:
+                        while True:
+                            data = await websocket.receive_text()
+                            await upstream_ws.send(data)
+                    except WebSocketDisconnect:
+                        await upstream_ws.close()
+
+                async def upstream_to_client() -> None:
+                    try:
+                        async for message in upstream_ws:
+                            if isinstance(message, bytes):
+                                await websocket.send_bytes(message)
+                            else:
+                                await websocket.send_text(message)
+                    except Exception:
+                        pass
+
+                tasks = [
+                    asyncio.create_task(client_to_upstream()),
+                    asyncio.create_task(upstream_to_client()),
+                ]
+                _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for p in pending:
+                    p.cancel()
+        except Exception:
+            try:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            except Exception:
+                pass
 
     for rule in registry.list_routes():
         _register_rule_routes(router=router, rule=rule)

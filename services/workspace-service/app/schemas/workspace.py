@@ -126,3 +126,46 @@ class WorkspaceCleanupResponse(BaseModel):
     destroyed_workspace_ids: list[uuid.UUID] = Field(default_factory=list)
     errors: int = 0
 
+
+class WorkspaceTestRunRequest(BaseModel):
+    """Allowlisted test execution request inside a provisioned workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    runner: Literal["pytest", "unittest", "npm_test"] = "pytest"
+    target_path: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Optional safe relative directory or test file within the workspace.",
+    )
+    timeout_seconds: int = Field(default=30, ge=5, le=120)
+
+    @field_validator("target_path")
+    @classmethod
+    def _validate_target_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip().replace("\\", "/")
+        if not cleaned:
+            return None
+        if cleaned.startswith("/") or ".." in cleaned.split("/"):
+            raise ValueError("target_path must be a relative path inside the workspace.")
+        for ch in cleaned:
+            if not (ch.isalnum() or ch in "_.-/"):
+                raise ValueError("target_path contains disallowed characters.")
+        return cleaned
+
+
+class WorkspaceTestRunResponse(BaseModel):
+    """Structured result from executing allowlisted checks in a workspace."""
+
+    workspace_id: uuid.UUID
+    project_id: uuid.UUID
+    runner: str
+    passed: bool
+    exit_code: int
+    duration_ms: float
+    summary: str
+    output_excerpt: str
+    executed_at: datetime
+

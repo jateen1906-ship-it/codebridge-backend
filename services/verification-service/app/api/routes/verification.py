@@ -12,6 +12,8 @@ from app.core.dependencies import require_authenticated, require_owner_or_admin
 from app.core.security import AuthenticatedUser
 from app.schemas.verification import (
     CreateVerificationRequest,
+    FreelancerVerificationListResponse,
+    MyVerifiedWorkListResponse,
     ProjectVerificationListResponse,
     PublicVerificationResponse,
     RevokeVerificationRequest,
@@ -61,6 +63,26 @@ async def public_lookup_verification(
 ) -> PublicVerificationResponse:
     service = _service(request, session)
     return await service.get_public_record(public_verification_id)
+
+
+@router.get("/me", response_model=MyVerifiedWorkListResponse)
+async def list_my_verified_work(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_authenticated),
+    session: AsyncSession = Depends(get_db_session),
+) -> MyVerifiedWorkListResponse:
+    return await _service(request, session).list_my_records(user=user)
+
+
+@router.get("/freelancers/{freelancer_id}", response_model=FreelancerVerificationListResponse)
+async def list_freelancer_verified_work(
+    freelancer_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+) -> FreelancerVerificationListResponse:
+    return await _service(request, session).list_freelancer_public_records(
+        freelancer_id=freelancer_id
+    )
 
 
 @router.get("/projects/{project_id}", response_model=ProjectVerificationListResponse)
@@ -114,3 +136,4 @@ async def revoke_verification_record(
         actor=actor,
         request_id=getattr(request.state, "request_id", None),
     )
+

@@ -232,6 +232,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_review
       IDENTITY_SERVICE_URL: http://identity-service:8001
       PROJECT_SERVICE_URL: http://project-service:8002
+      WORKSPACE_SERVICE_URL: http://workspace-service:8005
       NOTIFICATION_SERVICE_URL: http://notification-service:8009
       AUDIT_SERVICE_URL: http://audit-service:8011
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
@@ -243,6 +244,8 @@ services:
       identity-service:
         condition: service_healthy
       project-service:
+        condition: service_healthy
+      workspace-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health', timeout=3)"]

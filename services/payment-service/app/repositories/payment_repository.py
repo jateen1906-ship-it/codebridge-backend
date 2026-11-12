@@ -26,7 +26,12 @@ class PaymentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_escrow_by_id(self, escrow_id: uuid.UUID) -> EscrowPayment | None:
+    async def get_escrow_by_id(
+        self,
+        escrow_id: uuid.UUID,
+        *,
+        for_update: bool = False,
+    ) -> EscrowPayment | None:
         stmt = (
             select(EscrowPayment)
             .where(EscrowPayment.id == escrow_id)
@@ -35,6 +40,10 @@ class PaymentRepository:
                 selectinload(EscrowPayment.events),
             )
         )
+        if for_update:
+            bind = self.session.get_bind()
+            if bind is not None and bind.dialect.name != "sqlite":
+                stmt = stmt.with_for_update()
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_active_escrow_for_project(self, project_id: uuid.UUID) -> EscrowPayment | None:
@@ -97,3 +106,4 @@ class PaymentRepository:
 
     def add_idempotency_record(self, rec: PaymentIdempotencyRecord) -> None:
         self.session.add(rec)
+

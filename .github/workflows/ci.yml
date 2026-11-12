@@ -1,0 +1,77 @@
+name: CodeBridge Backend CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-config:
+    name: Format, Compile & Compose Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check Python syntax across all 13 apps
+        run: |
+          python -m compileall -q api-gateway/app services/*/app
+      - name: Validate Docker Compose syntax
+        run: |
+          docker compose config --quiet
+
+  service-tests:
+    name: Test ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - api-gateway
+          - services/identity-service
+          - services/project-service
+          - services/github-service
+          - services/code-context-service
+          - services/workspace-service
+          - services/review-service
+          - services/verification-service
+          - services/payment-service
+          - services/notification-service
+          - services/admin-service
+          - services/audit-service
+          - services/observability-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ${{ matrix.target }}/requirements.txt
+      - name: Run Pytest suite
+        working-directory: ${{ matrix.target }}
+        run: pytest tests -v
+
+  e2e-and-docker-check:
+    name: Full Platform E2E & Docker Build Check
+    needs: [lint-and-config]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install E2E runtime dependencies
+        run: |
+          pip install -r api-gateway/requirements.txt
+          for req in services/*/requirements.txt; do
+            pip install -r "$req"
+          done
+      - name: Run 13-Service Live E2E Workflow
+        run: pytest tests/e2e_platform_test.py -v
+      - name: Verify Docker image builds
+        run: docker compose build
+

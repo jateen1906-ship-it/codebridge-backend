@@ -105,3 +105,16 @@ class ProjectVerificationListResponse(BaseModel):
     project_id: uuid.UUID
     total: int
     items: list[VerifiedWorkRecordResponse]
+
+
+class FreelancerVerificationListResponse(BaseModel):
+    freelancer_id: uuid.UUID
+    total: int
+    items: list[PublicVerificationResponse]
+
+
+class MyVerifiedWorkListResponse(BaseModel):
+    user_id: uuid.UUID
+    total: int
+    items: list[VerifiedWorkRecordResponse]
+

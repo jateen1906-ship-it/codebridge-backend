@@ -10,6 +10,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ForbiddenError, NotFoundError
+from app.core.ws import NotificationWebSocketManager
 from app.models import EmailDeliveryLog, Notification, NotificationPreference
 from app.schemas.notification import (
     NotificationEventRequest,
@@ -25,8 +26,13 @@ def _utcnow() -> datetime:
 
 
 class NotificationService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        ws_manager: NotificationWebSocketManager | None = None,
+    ) -> None:
         self.session = session
+        self.ws_manager = ws_manager
 
     async def _get_or_default_preferences(self, user_id: uuid.UUID) -> tuple[bool, bool, list[str], datetime | None]:
         pref = (
@@ -98,7 +104,16 @@ class NotificationService:
             )
         await self.session.commit()
         await self.session.refresh(notification)
-        return NotificationResponse.model_validate(notification)
+        response = NotificationResponse.model_validate(notification)
+        if self.ws_manager is not None and not notification.is_read:
+            await self.ws_manager.broadcast_to_user(
+                payload.user_id,
+                {
+                    "event": "notification.created",
+                    "data": response.model_dump(mode="json"),
+                },
+            )
+        return response
 
     async def list_for_user(
         self,
@@ -196,3 +211,4 @@ class NotificationService:
             muted_event_types=muted_clean,
             updated_at=pref.updated_at,
         )
+

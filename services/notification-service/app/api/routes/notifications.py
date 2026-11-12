@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -13,6 +13,7 @@ from app.core.dependencies import (
     get_current_user,
     require_internal_or_admin,
 )
+from app.core.ws import NotificationWebSocketManager
 from app.schemas.notification import (
     NotificationEventRequest,
     NotificationListResponse,
@@ -26,6 +27,10 @@ from app.services.notification_service import NotificationService
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
+def _ws_manager(request: Request) -> NotificationWebSocketManager | None:
+    return getattr(request.app.state, "ws_manager", None)
+
+
 @router.post(
     "/events",
     response_model=NotificationResponse,
@@ -33,10 +38,51 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 )
 async def publish_notification_event(
     payload: NotificationEventRequest,
+    request: Request,
     _caller: str = Depends(require_internal_or_admin),
     session: AsyncSession = Depends(get_db_session),
 ) -> NotificationResponse:
-    return await NotificationService(session).ingest_event(payload)
+    return await NotificationService(session, ws_manager=_ws_manager(request)).ingest_event(payload)
+
+
+@router.websocket("/ws")
+async def notifications_websocket(
+    websocket: WebSocket,
+    token: str | None = Query(default=None),
+) -> None:
+    auth_header = websocket.headers.get("authorization", "")
+    resolved_token = (
+        auth_header[7:].strip()
+        if auth_header.lower().startswith("bearer ")
+        else (token or "").strip()
+    )
+    if not resolved_token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    try:
+        user = await websocket.app.state.identity_client.get_current_user(
+            access_token=resolved_token,
+            request_id=websocket.headers.get("x-request-id"),
+        )
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    manager: NotificationWebSocketManager = websocket.app.state.ws_manager
+    await manager.connect(user.id, websocket)
+    try:
+        await websocket.send_json(
+            {"event": "connected", "user_id": str(user.id), "role": user.role}
+        )
+        while True:
+            msg = await websocket.receive_text()
+            if msg.strip().lower() == "ping":
+                await websocket.send_json({"event": "pong"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await manager.disconnect(user.id, websocket)
 
 
 @router.get("", response_model=NotificationListResponse)
@@ -92,3 +138,4 @@ async def update_my_preferences(
         user_id=user.id,
         payload=payload,
     )
+

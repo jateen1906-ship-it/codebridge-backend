@@ -33,6 +33,8 @@ from app.schemas.workspace import (
     WorkspaceProvisionRequest,
     WorkspaceRefreshRequest,
     WorkspaceResponse,
+    WorkspaceTestRunRequest,
+    WorkspaceTestRunResponse,
 )
 from app.services.docker_adapter import DockerRuntimeAdapter
 from app.services.workspace_service import WorkspaceService
@@ -312,6 +314,39 @@ async def get_workspace_logs(
     return await service.get_logs(
         workspace_id=workspace_id,
         tail=tail,
+        auth_ctx=auth_ctx,
+        request_id=get_request_id(request),
+    )
+
+
+@router.post(
+    "/{workspace_id}/run-tests",
+    response_model=WorkspaceTestRunResponse,
+    summary="Execute allowlisted automated tests inside an isolated workspace",
+)
+async def run_workspace_tests(
+    workspace_id: uuid.UUID,
+    request: Request,
+    payload: WorkspaceTestRunRequest = WorkspaceTestRunRequest(),
+    auth_ctx: AuthContext = Depends(require_owner_or_freelancer),
+    session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    project_client: ProjectClient = Depends(get_project_client),
+    github_client: GitHubServiceClient = Depends(get_github_service_client),
+    docker_adapter: DockerRuntimeAdapter = Depends(get_docker_adapter),
+    metrics: MetricsRegistry = Depends(get_metrics_registry),
+) -> WorkspaceTestRunResponse:
+    service = _build_service(
+        session=session,
+        settings=settings,
+        project_client=project_client,
+        github_client=github_client,
+        docker_adapter=docker_adapter,
+        metrics=metrics,
+    )
+    return await service.run_workspace_tests(
+        workspace_id=workspace_id,
+        payload=payload,
         auth_ctx=auth_ctx,
         request_id=get_request_id(request),
     )

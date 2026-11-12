@@ -15,6 +15,7 @@ from app.core.config import Settings, load_settings
 from app.core.database import build_async_engine, build_session_factory
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger, request_id_ctx
+from app.core.ws import NotificationWebSocketManager
 
 logger = get_logger("main")
 
@@ -42,6 +43,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = build_session_factory(engine)
+    app.state.ws_manager = NotificationWebSocketManager()
     app.state.identity_client = IdentityClient(
         base_url=settings.IDENTITY_SERVICE_URL,
         timeout_seconds=settings.SERVICE_CLIENT_TIMEOUT_SECONDS,

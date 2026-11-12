@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import shutil
+import sys
+import time
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -34,6 +39,8 @@ from app.schemas.workspace import (
     WorkspaceProvisionRequest,
     WorkspaceRefreshRequest,
     WorkspaceResponse,
+    WorkspaceTestRunRequest,
+    WorkspaceTestRunResponse,
 )
 from app.services.archive_service import ArchiveExtractor
 from app.services.docker_adapter import ContainerCreateSpec, DockerRuntimeAdapter
@@ -462,6 +469,136 @@ class WorkspaceService:
             tail=capped_tail,
             lines=sanitized_lines,
             truncated=len(raw_lines) >= capped_tail,
+        )
+
+    async def run_workspace_tests(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        payload: WorkspaceTestRunRequest,
+        auth_ctx: AuthContext,
+        request_id: str,
+    ) -> WorkspaceTestRunResponse:
+        ws = await self._require_authorized_workspace(
+            workspace_id=workspace_id,
+            auth_ctx=auth_ctx,
+            request_id=request_id,
+            allow_admin_read=False,
+        )
+        now = utc_now()
+        if ws.expires_at.replace(tzinfo=now.tzinfo) <= now if ws.expires_at.tzinfo is None else ws.expires_at <= now:
+            await self._expire_workspace(ws, actor_id=auth_ctx.user.id)
+            raise ConflictError("Workspace has expired.", error_code="WORKSPACE_EXPIRED")
+
+        if ws.status not in {WorkspaceStatus.READY, WorkspaceStatus.RUNNING}:
+            raise ConflictError(
+                f"Workspace must be READY or RUNNING to run tests (current: {ws.status.value}).",
+                error_code="INVALID_WORKSPACE_STATE",
+            )
+
+        ws_dir = Path(ws.workspace_path).resolve()
+        if not ws_dir.exists() or not ws_dir.is_dir():
+            raise ConflictError(
+                "Workspace filesystem snapshot is not available.",
+                error_code="WORKSPACE_DIRECTORY_MISSING",
+            )
+
+        resolved_target: Path | None = None
+        if payload.target_path:
+            resolved_target = (ws_dir / payload.target_path).resolve()
+            if not resolved_target.is_relative_to(ws_dir) or not resolved_target.exists():
+                raise ValidationError("target_path does not exist within workspace directory.")
+
+        if payload.runner == "pytest":
+            cmd = [sys.executable, "-m", "pytest", "-q"]
+            if resolved_target is not None:
+                cmd.append(str(resolved_target))
+        elif payload.runner == "unittest":
+            if resolved_target is not None and resolved_target.is_file():
+                cmd = [sys.executable, "-m", "unittest", str(resolved_target)]
+            elif resolved_target is not None:
+                cmd = [sys.executable, "-m", "unittest", "discover", "-s", str(resolved_target)]
+            else:
+                cmd = [sys.executable, "-m", "unittest", "discover"]
+        else:
+            npm_bin = shutil.which("npm")
+            if not npm_bin:
+                raise ValidationError("npm runner is not available in this environment.")
+            cmd = [npm_bin, "test", "--", "--watchAll=false"]
+
+        safe_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
+            "TEMP": os.environ.get("TEMP", ""),
+            "TMP": os.environ.get("TMP", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUNBUFFERED": "1",
+        }
+
+        started = time.perf_counter()
+        timed_out = False
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(ws_dir),
+                env=safe_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                stdout_bytes, _ = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=float(payload.timeout_seconds),
+                )
+                exit_code = int(proc.returncode or 0)
+            except asyncio.TimeoutError:
+                timed_out = True
+                proc.kill()
+                stdout_bytes, _ = await proc.communicate()
+                exit_code = 124
+        except OSError as exc:
+            raise DockerRuntimeError("Failed to start workspace test runner.") from exc
+
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        raw_output = (stdout_bytes or b"").decode("utf-8", errors="replace")[-8000:]
+        excerpt = sanitize_error_message(raw_output, fallback="(no output)")
+        passed = exit_code == 0 and not timed_out
+        if timed_out:
+            summary = f"{payload.runner} timed out after {payload.timeout_seconds}s"
+        elif passed:
+            summary = f"{payload.runner} passed (exit code 0) in {duration_ms}ms"
+        else:
+            summary = f"{payload.runner} failed (exit code {exit_code}) in {duration_ms}ms"
+
+        executed_at = utc_now()
+        await self._repo.add_event(
+            workspace_id=ws.id,
+            actor_id=auth_ctx.user.id,
+            event_type="TEST_RUN_PASSED" if passed else "TEST_RUN_FAILED",
+            previous_status=ws.status.value,
+            new_status=ws.status.value,
+            details={
+                "runner": payload.runner,
+                "exit_code": exit_code,
+                "passed": passed,
+                "duration_ms": duration_ms,
+                "summary": summary,
+            },
+            now=executed_at,
+        )
+        ws.updated_at = executed_at
+        await self._session.commit()
+        self._metrics.increment("workspace_test_runs")
+        return WorkspaceTestRunResponse(
+            workspace_id=ws.id,
+            project_id=ws.project_id,
+            runner=payload.runner,
+            passed=passed,
+            exit_code=exit_code,
+            duration_ms=duration_ms,
+            summary=summary,
+            output_excerpt=excerpt,
+            executed_at=executed_at,
         )
 
     async def destroy_workspace(

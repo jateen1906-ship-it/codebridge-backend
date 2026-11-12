@@ -281,7 +281,7 @@ class PaymentService:
         if replay is not None:
             return replay
 
-        escrow = await self.repo.get_escrow_by_id(escrow_id)
+        escrow = await self.repo.get_escrow_by_id(escrow_id, for_update=True)
         if escrow is None:
             raise NotFoundError()
         self._require_owner_or_admin_for_escrow(escrow, actor)
@@ -359,7 +359,7 @@ class PaymentService:
         actor: AuthenticatedUser,
         request_id: str | None,
     ) -> EscrowPaymentResponse:
-        escrow = await self.repo.get_escrow_by_id(escrow_id)
+        escrow = await self.repo.get_escrow_by_id(escrow_id, for_update=True)
         if escrow is None:
             raise NotFoundError()
         self._require_owner_or_admin_for_escrow(escrow, actor)
@@ -436,7 +436,7 @@ class PaymentService:
         if replay is not None:
             return replay
 
-        escrow = await self.repo.get_escrow_by_id(escrow_id)
+        escrow = await self.repo.get_escrow_by_id(escrow_id, for_update=True)
         if escrow is None:
             raise NotFoundError()
         self._require_owner_or_admin_for_escrow(escrow, actor)
@@ -569,7 +569,7 @@ class PaymentService:
         if replay is not None:
             return replay
 
-        escrow = await self.repo.get_escrow_by_id(escrow_id)
+        escrow = await self.repo.get_escrow_by_id(escrow_id, for_update=True)
         if escrow is None:
             raise NotFoundError()
         self._require_owner_or_admin_for_escrow(escrow, actor)
@@ -653,7 +653,7 @@ class PaymentService:
         actor: AuthenticatedUser,
         request_id: str | None,
     ) -> EscrowPaymentResponse:
-        escrow = await self.repo.get_escrow_by_id(escrow_id)
+        escrow = await self.repo.get_escrow_by_id(escrow_id, for_update=True)
         if escrow is None:
             raise NotFoundError()
         self._require_owner_or_admin_for_escrow(escrow, actor)
@@ -763,3 +763,4 @@ class PaymentService:
         await self._require_read_access(escrow=escrow, user=user, request_id=request_id)
         txns = await self.repo.list_transactions(escrow_id)
         return [EscrowTransactionResponse.model_validate(t) for t in txns]
+
