@@ -1,8 +1,9 @@
-"""API Gateway self-health endpoint."""
+"""API Gateway self-health and readiness endpoints."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, status
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["Health"])
 
@@ -16,4 +17,19 @@ async def health_check(request: Request) -> dict[str, str]:
         "service": "api-gateway",
         "version": settings.APP_VERSION,
     }
+
+
+@router.get("/ready", summary="API Gateway readiness check")
+async def readiness_check(request: Request) -> JSONResponse:
+    """Check API Gateway HTTP client readiness."""
+    client_open = bool(getattr(request.app.state.http_client, "is_open", False))
+    payload = {
+        "status": "ready" if client_open else "not_ready",
+        "service": "api-gateway",
+        "version": request.app.state.settings.APP_VERSION,
+    }
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if client_open else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=payload,
+    )
 

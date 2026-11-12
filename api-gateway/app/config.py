@@ -57,6 +57,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "Authorization",
             "Content-Type",
+            "Idempotency-Key",
             "X-Request-ID",
             "Accept",
         ]

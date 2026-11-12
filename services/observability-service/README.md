@@ -1,20 +1,9 @@
-# Observability Service (`observability-service`)
+# CodeBridge Observability Service (`8012`)
 
-> **Status:** Phase 0 initialized (no business logic, database connections, or endpoints implemented yet).
+Operational monitoring, health/readiness probing, and telemetry aggregation across CodeBridge.
 
-- **Planned Local Port:** `8012`
-- **Planned Database Ownership:** `codebridge_observability (optional/telemetry)`
-
-## Responsibilities
-
-- Health monitoring
-- Readiness monitoring
-- Service metrics
-- Operational monitoring
-
-## Service Isolation Rules
-
-- Independently runnable and deployable FastAPI service (`services/observability-service`).
-- Owns its own `requirements.txt`, `.env.example`, `Dockerfile`, `app/`, and `tests/`.
-- Communicates with peer microservices strictly via synchronous HTTP/REST (HTTPX).
-- Must not import internal models, repositories, or core modules from any other microservice.
+## Capabilities
+- Concurrent `/health` and `/ready` probing across `api-gateway` (`8000`) and all 12 microservices (`8001`–`8012`) via `GET /api/v1/observability/services` (`ADMIN`).
+- Authenticated internal telemetry intake (`POST /api/v1/observability/telemetry`) via constant-time `X-Service-Key` or `ADMIN` Bearer token with secret scrubbing.
+- Aggregated service latency (`avg`, `p95`, `max`) and error rate metrics (`GET /api/v1/observability/metrics`, `ADMIN`).
+- Recent sanitized error stream (`GET /api/v1/observability/errors`, `ADMIN`).

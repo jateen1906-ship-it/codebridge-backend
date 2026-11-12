@@ -1,24 +1,471 @@
 # ==============================================================================
-# CodeBridge Backend — Docker Compose Configuration (Phase 0 Placeholder)
+# CodeBridge Backend — Full Microservices Stack (PostgreSQL + Gateway + 12 Services)
 # ==============================================================================
-# Phase 0 initializes the monorepo structure only.
-# Service containers, PostgreSQL databases, Redis, and monitoring services are
-# NOT configured or started in this phase.
-#
-# Planned services and local ports:
-#   - api-gateway:           8000
-#   - identity-service:      8001
-#   - project-service:       8002
-#   - github-service:        8003
-#   - code-context-service:  8004
-#   - workspace-service:     8005
-#   - review-service:        8006
-#   - verification-service:  8007
-#   - payment-service:       8008
-#   - notification-service:  8009
-#   - admin-service:         8010
-#   - audit-service:         8011
-#   - observability-service: 8012
 
-services: {}
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codebridge-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_local_only}
+      POSTGRES_DB: postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init-databases.sql:/docker-entrypoint-initdb.d/01-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - codebridge-net
 
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: codebridge-api-gateway
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_SERVICE_URL: http://github-service:8003
+      CODE_CONTEXT_SERVICE_URL: http://code-context-service:8004
+      WORKSPACE_SERVICE_URL: http://workspace-service:8005
+      REVIEW_SERVICE_URL: http://review-service:8006
+      VERIFICATION_SERVICE_URL: http://verification-service:8007
+      PAYMENT_SERVICE_URL: http://payment-service:8008
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      ADMIN_SERVICE_URL: http://admin-service:8010
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      OBSERVABILITY_SERVICE_URL: http://observability-service:8012
+      REQUEST_TIMEOUT_SECONDS: ${HTTP_CLIENT_TIMEOUT_SECONDS:-10.0}
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  identity-service:
+    build:
+      context: ./services/identity-service
+      dockerfile: Dockerfile
+    container_name: codebridge-identity-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8001"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8001
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_identity
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-insecure-secret-key-change-before-production-32bytes}
+    ports:
+      - "${IDENTITY_SERVICE_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  project-service:
+    build:
+      context: ./services/project-service
+      dockerfile: Dockerfile
+    container_name: codebridge-project-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8002"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8002
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_project
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+    ports:
+      - "${PROJECT_SERVICE_PORT:-8002}:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  github-service:
+    build:
+      context: ./services/github-service
+      dockerfile: Dockerfile
+    container_name: codebridge-github-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8003"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8003
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_github
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-dev-github-client-id-placeholder}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-dev-github-client-secret-placeholder}
+      GITHUB_OAUTH_CALLBACK_URL: ${GITHUB_OAUTH_CALLBACK_URL:-http://localhost:8000/api/v1/github/oauth/callback}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-REVWX09OTFlfSU5TRUNVUkVfS0VZX0RPX05PVF9VU0U=}
+    ports:
+      - "${GITHUB_SERVICE_PORT:-8003}:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  code-context-service:
+    build:
+      context: ./services/code-context-service
+      dockerfile: Dockerfile
+    container_name: codebridge-code-context-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8004"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8004
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_code_context
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_SERVICE_URL: http://github-service:8003
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-mock}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+    volumes:
+      - chroma_data:/app/chroma_data
+    ports:
+      - "${CODE_CONTEXT_SERVICE_PORT:-8004}:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+      github-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  workspace-service:
+    build:
+      context: ./services/workspace-service
+      dockerfile: Dockerfile
+    container_name: codebridge-workspace-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8005"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8005
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_workspace
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_SERVICE_URL: http://github-service:8003
+      WORKSPACE_DOCKER_MODE: mock
+    volumes:
+      - workspace_data:/app/workspace_data
+    ports:
+      - "${WORKSPACE_SERVICE_PORT:-8005}:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+      github-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  review-service:
+    build:
+      context: ./services/review-service
+      dockerfile: Dockerfile
+    container_name: codebridge-review-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8006"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8006
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_review
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      WORKSPACE_SERVICE_URL: http://workspace-service:8005
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${REVIEW_SERVICE_PORT:-8006}:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+      workspace-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8006/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  verification-service:
+    build:
+      context: ./services/verification-service
+      dockerfile: Dockerfile
+    container_name: codebridge-verification-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8007"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8007
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_verification
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_SERVICE_URL: http://github-service:8003
+      REVIEW_SERVICE_URL: http://review-service:8006
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+      VERIFICATION_SIGNING_SECRET: ${VERIFICATION_SIGNING_SECRET:-dev-verification-hmac-secret-change-me-32chars}
+    ports:
+      - "${VERIFICATION_SERVICE_PORT:-8007}:8007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+      review-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    container_name: codebridge-payment-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8008"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8008
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_payment
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      REVIEW_SERVICE_URL: http://review-service:8006
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${PAYMENT_SERVICE_PORT:-8008}:8008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+      review-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: codebridge-notification-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8009"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8009
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_notification
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8009}:8009"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8009/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  admin-service:
+    build:
+      context: ./services/admin-service
+      dockerfile: Dockerfile
+    container_name: codebridge-admin-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8010"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8010
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_admin
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      PAYMENT_SERVICE_URL: http://payment-service:8008
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${ADMIN_SERVICE_PORT:-8010}:8010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  audit-service:
+    build:
+      context: ./services/audit-service
+      dockerfile: Dockerfile
+    container_name: codebridge-audit-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8011"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8011
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_audit
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${AUDIT_SERVICE_PORT:-8011}:8011"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+  observability-service:
+    build:
+      context: ./services/observability-service
+      dockerfile: Dockerfile
+    container_name: codebridge-observability-service
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8012"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: 8012
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change_me_local_only}@postgres:5432/codebridge_observability
+      API_GATEWAY_URL: http://api-gateway:8000
+      IDENTITY_SERVICE_URL: http://identity-service:8001
+      PROJECT_SERVICE_URL: http://project-service:8002
+      GITHUB_SERVICE_URL: http://github-service:8003
+      CODE_CONTEXT_SERVICE_URL: http://code-context-service:8004
+      WORKSPACE_SERVICE_URL: http://workspace-service:8005
+      REVIEW_SERVICE_URL: http://review-service:8006
+      VERIFICATION_SERVICE_URL: http://verification-service:8007
+      PAYMENT_SERVICE_URL: http://payment-service:8008
+      NOTIFICATION_SERVICE_URL: http://notification-service:8009
+      ADMIN_SERVICE_URL: http://admin-service:8010
+      AUDIT_SERVICE_URL: http://audit-service:8011
+      INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-dev-internal-service-key-change-me}
+    ports:
+      - "${OBSERVABILITY_SERVICE_PORT:-8012}:8012"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8012/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - codebridge-net
+
+volumes:
+  postgres_data:
+  chroma_data:
+  workspace_data:
+
+networks:
+  codebridge-net:
+    driver: bridge

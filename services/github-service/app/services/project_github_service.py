@@ -259,3 +259,62 @@ class ProjectGitHubService:
             sha=validated_sha,
             repo_path=effective_path,
         )
+
+    async def download_snapshot(
+        self,
+        *,
+        project_id: uuid.UUID,
+        auth_ctx: AuthContext,
+        raw_ref: str | None,
+        request_id: str,
+    ) -> tuple[bytes, str, str]:
+        """Download a read-only zipball snapshot for OWNER or actively assigned FREELANCER."""
+        validated_ref = validate_git_ref(raw_ref)
+        project = await self._project_client.get_project(
+            project_id,
+            bearer_token=auth_ctx.bearer_token,
+            request_id=request_id,
+        )
+        is_owner = auth_ctx.user.role == UserRole.OWNER and project.owner_id == auth_ctx.user.id
+        is_assigned_freelancer = (
+            auth_ctx.user.role == UserRole.FREELANCER
+            and project.is_actively_assigned_freelancer(auth_ctx.user.id)
+        )
+        if not (is_owner or is_assigned_freelancer):
+            raise ForbiddenError(
+                "Only the project owner or actively assigned freelancer may download repository snapshots."
+            )
+
+        repo_link = await self._project_repo_repo.get_active_by_project_id(project_id)
+        if repo_link is None:
+            raise NotFoundError(
+                "No active GitHub repository is connected to this project.",
+                error_code="PROJECT_REPOSITORY_NOT_FOUND",
+            )
+        connection = await self._connection_repo.get_by_id(repo_link.github_connection_id)
+        if (
+            connection is None
+            or connection.status != GitHubConnectionStatus.ACTIVE
+            or connection.owner_id != repo_link.owner_id
+        ):
+            raise NotFoundError(
+                "No active GitHub OAuth connection was found for this project.",
+                error_code="GITHUB_CONNECTION_NOT_FOUND",
+            )
+
+        effective_ref = validated_ref or repo_link.default_branch
+        archive_bytes = await self._github_api_service.download_repository_snapshot(
+            connection=connection,
+            full_name=repo_link.full_name,
+            ref=effective_ref,
+        )
+        logger.info(
+            "Served GitHub repository snapshot archive",
+            extra={
+                "event": "project_repository_snapshot_served",
+                "user_id": str(auth_ctx.user.id),
+                "project_id": str(project_id),
+                "repository_full_name": repo_link.full_name,
+            },
+        )
+        return archive_bytes, repo_link.full_name, effective_ref

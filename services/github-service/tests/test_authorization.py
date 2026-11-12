@@ -36,15 +36,18 @@ async def test_authorization_matrix_and_correlation_id_propagation(
 
     for method, path, params in protected_owner_requests:
         # Unauthenticated -> 401 with echoed X-Request-ID
-        kwargs = {"params": params} if params else {}
-        if method == "POST":
-            kwargs["json"] = {"github_repository_id": 1001, "full_name": "alice-gh/sample-api"}
+        json_body = (
+            {"github_repository_id": 1001, "full_name": "alice-gh/sample-api"}
+            if method == "POST"
+            else None
+        )
         unauth = await client.request(
             method,
             path,
+            params=params,
+            json=json_body,
             headers={"X-Request-ID": correlation_id},
             follow_redirects=False,
-            **kwargs,
         )
         assert unauth.status_code == 401
         assert unauth.headers.get("x-request-id") == correlation_id
@@ -55,9 +58,10 @@ async def test_authorization_matrix_and_correlation_id_propagation(
             forbidden = await client.request(
                 method,
                 path,
+                params=params,
+                json=json_body,
                 headers=auth_headers(role_token, request_id=correlation_id),
                 follow_redirects=False,
-                **kwargs,
             )
             assert forbidden.status_code == 403
             assert forbidden.headers.get("x-request-id") == correlation_id

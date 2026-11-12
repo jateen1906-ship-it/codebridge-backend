@@ -5,7 +5,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from app.core.config import Settings, load_settings
 from app.core.database import build_async_engine, build_session_factory
@@ -90,6 +92,33 @@ def create_app(
             service="project-service",
             version=resolved_settings.APP_VERSION,
         )
+
+    @application.get(
+        "/ready",
+        tags=["Health"],
+        summary="Project Service readiness check",
+    )
+    async def readiness_check(request: Request) -> JSONResponse:
+        try:
+            async with request.app.state.engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "status": "ready",
+                    "service": "project-service",
+                    "database": "ok",
+                },
+            )
+        except Exception:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={
+                    "status": "not_ready",
+                    "service": "project-service",
+                    "database": "unavailable",
+                },
+            )
 
     api_v1_router = APIRouter(prefix=resolved_settings.API_V1_PREFIX)
     api_v1_router.include_router(projects_router)

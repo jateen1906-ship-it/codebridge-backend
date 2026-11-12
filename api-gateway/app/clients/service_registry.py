@@ -120,7 +120,7 @@ def build_service_registry(settings: Settings) -> ServiceRegistry:
     api_prefix = settings.API_V1_PREFIX.rstrip("/")
     default_timeout = settings.REQUEST_TIMEOUT_SECONDS
 
-    service_specs: list[tuple[str, str, tuple[tuple[str, int], ...]]] = [
+    service_specs: list[tuple[str, str, tuple[tuple[str, int] | tuple[str, int, str], ...]]] = [
         ("identity-service", settings.IDENTITY_SERVICE_URL, (("/auth", 100), ("/freelancers", 100), ("/profile", 100))),
         ("project-service", settings.PROJECT_SERVICE_URL, (("/projects", 100),)),
         (
@@ -134,7 +134,14 @@ def build_service_registry(settings: Settings) -> ServiceRegistry:
         ("code-context-service", settings.CODE_CONTEXT_SERVICE_URL, (("/code-context", 100),)),
         ("workspace-service", settings.WORKSPACE_SERVICE_URL, (("/workspace", 100),)),
         ("review-service", settings.REVIEW_SERVICE_URL, (("/submissions", 100), ("/review", 100))),
-        ("verification-service", settings.VERIFICATION_SERVICE_URL, (("/verification", 100),)),
+        (
+            "verification-service",
+            settings.VERIFICATION_SERVICE_URL,
+            (
+                ("/profile/verified-work", 10, "/verification/me"),
+                ("/verification", 100),
+            ),
+        ),
         ("payment-service", settings.PAYMENT_SERVICE_URL, (("/payment", 100),)),
         ("notification-service", settings.NOTIFICATION_SERVICE_URL, (("/notifications", 100),)),
         ("admin-service", settings.ADMIN_SERVICE_URL, (("/admin", 100),)),
@@ -153,8 +160,13 @@ def build_service_registry(settings: Settings) -> ServiceRegistry:
 
         public_prefixes: list[str] = []
         internal_paths: list[str] = []
-        for public_prefix, priority in prefix_specs:
-            internal_target = f"{api_prefix}{public_prefix}"
+        for spec in prefix_specs:
+            if len(spec) == 3:
+                public_prefix, priority, internal_suffix = spec
+            else:
+                public_prefix, priority = spec
+                internal_suffix = public_prefix
+            internal_target = f"{api_prefix}{internal_suffix}"
             public_prefixes.append(public_prefix)
             internal_paths.append(internal_target)
             routes.append(

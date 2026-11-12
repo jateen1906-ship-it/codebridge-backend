@@ -360,15 +360,27 @@ class MockGitHubState:
     forced_api_status: int | None = None
     forced_rate_limit_403: bool = False
     force_timeout: bool = False
+    snapshot_zip_bytes: bytes | None = None
+    snapshot_redirect_url: str | None = None
     token_exchange_calls: int = 0
     api_calls: list[httpx.Request] = field(default_factory=list)
 
     def build_transport(self) -> httpx.MockTransport:
         def handler(request: httpx.Request) -> httpx.Response:
             self.api_calls.append(request)
-            assert request.url.host in {"github.com", "api.github.com"}
+            assert request.url.host in {
+                "github.com",
+                "api.github.com",
+                "codeload.github.com",
+                "evil.example.com",
+            }
             if self.force_timeout:
                 raise httpx.ReadTimeout("Simulated GitHub timeout", request=request)
+
+            if request.url.host == "codeload.github.com":
+                assert "authorization" not in {k.lower() for k in request.headers.keys()}
+                zip_payload = self.snapshot_zip_bytes or b"PK\x03\x04mockzip"
+                return httpx.Response(200, content=zip_payload, headers={"content-type": "application/zip"})
 
             if request.url.host == "github.com" and request.url.path == "/login/oauth/access_token":
                 self.token_exchange_calls += 1
@@ -443,6 +455,18 @@ class MockGitHubState:
                     if content_obj is None:
                         return httpx.Response(404, json={"message": "Not Found"})
                     return httpx.Response(200, json=content_obj)
+                if parts[2] == "zipball":
+                    if self.snapshot_redirect_url:
+                        return httpx.Response(
+                            302,
+                            headers={"Location": self.snapshot_redirect_url},
+                        )
+                    zip_payload = self.snapshot_zip_bytes or b"PK\x03\x04mockzip"
+                    return httpx.Response(
+                        200,
+                        content=zip_payload,
+                        headers={"content-type": "application/zip"},
+                    )
 
             return httpx.Response(404, json={"message": "Not Found"})
 

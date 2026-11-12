@@ -198,3 +198,26 @@ async def test_health_and_openapi_endpoints(client: httpx.AsyncClient) -> None:
     assert "/api/v1/projects/{project_id}/cancel" in paths
     assert "/api/v1/projects/{project_id}/select-freelancer" in paths
 
+
+@pytest.mark.asyncio
+async def test_project_ready_endpoint_200_and_503_on_db_failure(
+    client: httpx.AsyncClient,
+    project_app: FastAPI,
+) -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    ok_res = await client.get("/ready")
+    assert ok_res.status_code == 200
+    assert ok_res.json()["status"] == "ready"
+
+    orig_engine = project_app.state.engine
+    broken_engine = create_async_engine("postgresql+asyncpg://bad:bad@127.0.0.1:1/bad")
+    project_app.state.engine = broken_engine
+    try:
+        fail_res = await client.get("/ready")
+        assert fail_res.status_code == 503
+        assert fail_res.json()["status"] == "not_ready"
+    finally:
+        project_app.state.engine = orig_engine
+        await broken_engine.dispose()
+

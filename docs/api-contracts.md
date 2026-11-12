@@ -110,4 +110,37 @@ Routed through API Gateway `/api/v1/projects/{project_id}/github` *(priority `10
 | `GET` | `/api/v1/projects/{project_id}/github/contents` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RESOURCE_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
 | `GET` | `/api/v1/projects/{project_id}/github/commits` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
 
+## 8. Implemented Domain Endpoints — Code Context Service (Phase 5)
+
+Routed through API Gateway `/api/v1/code-context` -> `code-context-service` (`:8004`) without stripping `/api/v1`. Root operational probes `GET /health` and `GET /ready` are exposed directly by `code-context-service`.
+
+| Method | Path | Auth / Role Required | Success Status | Key Error Codes |
+| :--- | :--- | :--- | :---: | :--- |
+| `POST` | `/api/v1/code-context/projects/{project_id}/index` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `REPOSITORY_NOT_CONNECTED`, `INDEXING_IN_PROGRESS`, `INDEX_LIMIT_EXCEEDED`, `EMBEDDING_PROVIDER_UNAVAILABLE`, `GITHUB_SERVICE_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/reindex` | `OWNER` (must own project) | `200 OK` | Same as `/index` (preserves active index if build fails) |
+| `GET` | `/api/v1/code-context/projects/{project_id}/index/status` | `OWNER` (own), actively assigned `FREELANCER`, `ADMIN` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/query` | `OWNER` (own), actively assigned `FREELANCER` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `VALIDATION_ERROR`, `EMBEDDING_PROVIDER_UNAVAILABLE`, `LLM_PROVIDER_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/insights/generate` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `LLM_PROVIDER_UNAVAILABLE` |
+| `GET` | `/api/v1/code-context/projects/{project_id}/insights` | `OWNER` (own), actively assigned `FREELANCER`, `ADMIN` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND` |
+
+## 9. Implemented Domain Endpoints — Phases 6–13
+
+- **`workspace-service` (`/api/v1/workspace`, `:8005`):**
+  - `POST /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/{workspace_id}`, `POST /api/v1/workspace/{workspace_id}/{start,stop,refresh}`, `GET /api/v1/workspace/{workspace_id}/logs`, `DELETE /api/v1/workspace/{workspace_id}`, `POST /api/v1/workspace/cleanup-expired`
+- **`review-service` (`/api/v1/submissions`, `/api/v1/review`, `:8006`):**
+  - `POST /api/v1/submissions/projects/{project_id}`, `GET /api/v1/submissions/projects/{project_id}`, `GET /api/v1/submissions/{submission_id}`, `POST /api/v1/submissions/{submission_id}/{submit,withdraw,comments}`
+  - `POST /api/v1/review/submissions/{submission_id}/{start,decision}`, `GET /api/v1/review/submissions/{submission_id}`, `GET /api/v1/review/projects/{project_id}`
+- **`verification-service` (`/api/v1/verification`, `:8007`):**
+  - `POST /api/v1/verification/records`, `GET /api/v1/verification/public/{public_verification_id}` *(unauthenticated, sanitized)*, `GET /api/v1/verification/projects/{project_id}`, `GET /api/v1/verification/records/{record_id}`, `POST /api/v1/verification/records/{record_id}/{verify,revoke}`
+- **`payment-service` (`/api/v1/payment`, `:8008`):**
+  - `POST /api/v1/payment/projects/{project_id}/escrow`, `POST /api/v1/payment/escrows/{escrow_id}/{fund,hold,release,refund,cancel}` *(supports `Idempotency-Key`)*, `GET /api/v1/payment/projects/{project_id}`, `GET /api/v1/payment/escrows/{escrow_id}`, `GET /api/v1/payment/escrows/{escrow_id}/transactions`
+- **`notification-service` (`/api/v1/notifications`, `:8009`):**
+  - `POST /api/v1/notifications/events` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/notifications`, `POST /api/v1/notifications/{notification_id}/read`, `POST /api/v1/notifications/read-all`, `GET/PUT /api/v1/notifications/preferences`
+- **`admin-service` (`/api/v1/admin`, `:8010`, strictly `ADMIN`):**
+  - `GET /api/v1/admin/users`, `POST /api/v1/admin/users/{user_id}/{suspend,restore}`, `GET /api/v1/admin/projects`, `GET /api/v1/admin/audit-logs`, `POST/GET /api/v1/admin/reports`, `POST /api/v1/admin/reports/{report_id}/resolve`, `GET /api/v1/admin/actions`
+- **`audit-service` (`/api/v1/audit`, `:8011`, append-only):**
+  - `POST /api/v1/audit/events` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/audit/events`, `GET /api/v1/audit/projects/{project_id}`
+- **`observability-service` (`/api/v1/observability`, `:8012`):**
+  - `GET /api/v1/observability/services` *(`ADMIN`)*, `POST /api/v1/observability/telemetry` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/observability/metrics` *(`ADMIN`)*, `GET /api/v1/observability/errors` *(`ADMIN`)*
+
 

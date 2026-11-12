@@ -15,6 +15,7 @@ from app.core.dependencies import (
     get_settings,
     require_any_authenticated,
     require_owner,
+    require_owner_or_freelancer,
 )
 from app.core.security import AuthenticatedUser
 from app.models.project import ProjectStatus
@@ -24,6 +25,7 @@ from app.schemas.project import (
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
+    WorkflowTransitionRequest,
 )
 from app.services.project_service import ProjectService
 
@@ -221,4 +223,30 @@ async def cancel_project(
 ) -> ProjectResponse:
     service = ProjectService(session, settings)
     return await service.cancel_project(project_id=project_id, owner=current_owner)
+
+
+@router.post(
+    "/{project_id}/workflow/transition",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+    summary="Internal workflow hook for Workspace/Review state coordination",
+)
+async def transition_project_workflow(
+    project_id: uuid.UUID,
+    payload: WorkflowTransitionRequest,
+    actor: AuthenticatedUser = Depends(require_owner_or_freelancer),
+    session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> ProjectResponse:
+    service = ProjectService(session, settings)
+    if payload.target_status == "IN_PROGRESS":
+        return await service.start_work(project_id=project_id, actor=actor)
+    if payload.target_status == "CHANGES_REQUESTED":
+        return await service.request_changes(project_id=project_id, owner=actor)
+    return await service.complete_project(
+        project_id=project_id,
+        owner=actor,
+        approval_verified=payload.approval_verified,
+    )
 

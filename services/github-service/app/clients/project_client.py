@@ -54,11 +54,21 @@ class ProjectSummary:
     owner_id: uuid.UUID
     status: str
     has_active_assignment: bool
+    assigned_freelancer_id: uuid.UUID | None = None
+    active_assignment_status: str | None = None
 
     @property
     def has_active_workflow(self) -> bool:
         """Return True when disconnecting a repository would disrupt an active workflow."""
         return self.has_active_assignment or self.status.upper() in _ACTIVE_WORKFLOW_STATUSES
+
+    def is_actively_assigned_freelancer(self, user_id: uuid.UUID) -> bool:
+        """Return True when user_id matches the project's ACTIVE freelancer assignment."""
+        return (
+            self.assigned_freelancer_id is not None
+            and self.assigned_freelancer_id == user_id
+            and (self.active_assignment_status or "").upper() == "ACTIVE"
+        )
 
 
 class ProjectClient:
@@ -205,6 +215,12 @@ class ProjectClient:
                 error_code="PROJECT_SERVICE_UNAVAILABLE",
             )
 
+        assigned_freelancer_id: uuid.UUID | None = None
+        active_assignment_status: str | None = None
+        if parsed.active_assignment is not None:
+            assigned_freelancer_id = parsed.active_assignment.freelancer_id
+            active_assignment_status = parsed.active_assignment.status
+
         has_active_assignment = (
             parsed.active_assignment is not None
             and parsed.active_assignment.status.upper() == "ACTIVE"
@@ -214,5 +230,7 @@ class ProjectClient:
             owner_id=parsed.owner_id,
             status=parsed.status,
             has_active_assignment=has_active_assignment,
+            assigned_freelancer_id=assigned_freelancer_id,
+            active_assignment_status=active_assignment_status,
         )
 

@@ -27,6 +27,7 @@ async def test_all_12_microservice_routes_forward_to_configured_urls() -> None:
         ("/api/v1/auth/login", "http://localhost:8001", "/api/v1/auth/login"),
         ("/api/v1/freelancers/12", "http://localhost:8001", "/api/v1/freelancers/12"),
         ("/api/v1/profile", "http://localhost:8001", "/api/v1/profile"),
+        ("/api/v1/profile/verified-work", "http://localhost:8007", "/api/v1/verification/me"),
         ("/api/v1/projects/42/tasks", "http://localhost:8002", "/api/v1/projects/42/tasks"),
         ("/api/v1/projects/42/github/commits", "http://localhost:8003", "/api/v1/projects/42/github/commits"),
         ("/api/v1/github/oauth/callback", "http://localhost:8003", "/api/v1/github/oauth/callback"),

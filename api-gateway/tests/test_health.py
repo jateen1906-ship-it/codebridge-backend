@@ -146,3 +146,21 @@ async def test_missing_service_in_registry_returns_service_unavailable() -> None
     with pytest.raises(ServiceConfigurationError):
         app.state.service_registry.get_service("identity-service")
 
+
+@pytest.mark.asyncio
+async def test_gateway_ready_returns_200_when_open_and_503_when_closed() -> None:
+    """Gateway /ready returns 200 when HTTP pool is open and 503 when closed."""
+    app = create_app(Settings())
+
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            ok_resp = await client.get("/ready")
+            assert ok_resp.status_code == 200
+            assert ok_resp.json()["status"] == "ready"
+
+            await app.state.http_client.shutdown()
+            fail_resp = await client.get("/ready")
+            assert fail_resp.status_code == 503
+            assert fail_resp.json()["status"] == "not_ready"
+

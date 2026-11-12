@@ -67,6 +67,7 @@ def require_roles(
 
 require_owner = require_roles(UserRole.OWNER)
 require_freelancer = require_roles(UserRole.FREELANCER)
+require_owner_or_freelancer = require_roles(UserRole.OWNER, UserRole.FREELANCER)
 require_admin = require_roles(UserRole.ADMIN)
 require_any_authenticated = require_roles(
     UserRole.OWNER,

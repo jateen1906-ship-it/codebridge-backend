@@ -1,0 +1,3 @@
+search-path = ["."]
+site-package-path = ["api-gateway/.venv/Lib/site-packages", "services/identity-service/.venv/Lib/site-packages"]
+project-excludes = ["api-gateway/**", "services/**", "**/.venv/**"]

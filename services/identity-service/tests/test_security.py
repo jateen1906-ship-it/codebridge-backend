@@ -244,3 +244,26 @@ async def test_openapi_documentation_complete(client: httpx.AsyncClient) -> None
     assert expected_paths.issubset(set(spec["paths"].keys()))
     assert "HTTPBearer" in spec["components"]["securitySchemes"]
     assert "ErrorResponse" in spec["components"]["schemas"]
+
+
+@pytest.mark.asyncio
+async def test_identity_ready_endpoint_200_and_503_on_db_failure(
+    client: httpx.AsyncClient,
+    identity_app: FastAPI,
+) -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    ok_res = await client.get("/ready")
+    assert ok_res.status_code == 200
+    assert ok_res.json()["status"] == "ready"
+
+    orig_engine = identity_app.state.engine
+    broken_engine = create_async_engine("postgresql+asyncpg://bad:bad@127.0.0.1:1/bad")
+    identity_app.state.engine = broken_engine
+    try:
+        fail_res = await client.get("/ready")
+        assert fail_res.status_code == 503
+        assert fail_res.json()["status"] == "not_ready"
+    finally:
+        identity_app.state.engine = orig_engine
+        await broken_engine.dispose()
