@@ -75,4 +75,11 @@ Because calls are synchronous, upstream callers must handle downstream failures 
 - **`github-service` -> `project-service` (`GET /api/v1/projects/{project_id}`):** Synchronous project ownership, read-visibility authorization, and active-workflow verification forwarding caller `Authorization` header and `X-Request-ID` via pooled `ProjectClient`; fails closed with `503 PROJECT_SERVICE_UNAVAILABLE`.
 - **`github-service` -> GitHub (`https://github.com/login/oauth/access_token`, `https://api.github.com`):** Fixed-host OAuth token exchange and bounded read-only REST API client (`GitHubHTTPClient`, `follow_redirects=False`) with timeout (`504`) and rate-limit (`429`) translation.
 
+## 7. Implemented Phase 5 Synchronous Integrations — `code-context-service`
+
+- **`code-context-service` -> `identity-service` (`GET /api/v1/auth/me`):** Synchronous token verification forwarding caller `Authorization` and `X-Request-ID`; fails closed with `503 IDENTITY_SERVICE_UNAVAILABLE`.
+- **`code-context-service` -> `project-service` (`GET /api/v1/projects/{project_id}`):** Synchronous ownership and active freelancer assignment checks forwarding caller `Authorization` and `X-Request-ID`; fails closed with `503 PROJECT_SERVICE_UNAVAILABLE`.
+- **`code-context-service` -> `github-service` (`/status`, `/branches`, `/contents`):** Sole permitted source for repository tree & file retrieval using the authenticated OWNER's bearer token; never connects directly to `https://api.github.com`.
+- **`code-context-service` -> Embedding / LLM Providers & ChromaDB:** Configurable HTTPX embedding/LLM calls (`openai`, `ollama`, `mock`, `none`) with `503 EMBEDDING_PROVIDER_UNAVAILABLE` / `503 LLM_PROVIDER_UNAVAILABLE` (or retrieval-only query fallback) and local versioned ChromaDB vector storage.
+
 

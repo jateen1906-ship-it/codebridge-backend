@@ -52,4 +52,14 @@ Because distributed transactions (2PC) and message-broker sagas are intentionall
 | `oauth_states` | Short-lived, single-use SHA-256 `state_hash` bound to `(owner_id, project_id)` | Unique `state_hash`, atomic `consumed_at` conditional update prior to OAuth code exchange |
 | `project_repositories` | Project-to-repository association and authoritative GitHub repository metadata | FK `github_connection_id -> github_connections.id (ON DELETE RESTRICT)`, partial unique index `uq_project_repositories_one_active_per_project` on `(project_id) WHERE connection_status = 'ACTIVE'` |
 
+## 6. Implemented Phase 5 Schema Summary — `code-context-service` (`codebridge_code_context`)
+
+| Table | Purpose | Key Constraints |
+| :--- | :--- | :--- |
+| `repository_indexes` | Versioned project index state, branch, commit SHA, Chroma collection name, counts, and `is_active` flag | Unique `(project_id, index_version)`, unique `collection_name`, partial unique `uq_repo_index_one_active_per_project` on `(project_id) WHERE is_active = true` |
+| `indexing_jobs` | Execution tracking & concurrency lock for `INITIAL` and `REINDEX` runs | FK `repository_index_id -> repository_indexes.id (CASCADE)`, partial unique `uq_indexing_job_one_inflight_per_project` on `(project_id) WHERE status IN ('PENDING', 'RUNNING')` |
+| `indexed_files` | File inventory with language, SHA, size, status (`INDEXED`/`SKIPPED`/`FAILED`), and `skip_reason` | FK `repository_index_id -> repository_indexes.id (CASCADE)`, unique `(repository_index_id, file_path)` |
+| `code_chunks` | Compact line-range metadata (`start_line`, `end_line`, `content_hash`, `vector_id`) mapped to ChromaDB | FK `repository_index_id` & `indexed_file_id (CASCADE)`, unique `(repository_index_id, chunk_identifier)` (raw chunk text lives in ChromaDB) |
+| `repository_insights` | Persisted deterministic health diagnostics & optional labeled AI architectural summary (`JSON`/`JSONB`) | FK `repository_index_id -> repository_indexes.id (ON DELETE RESTRICT)` preserving historical insight traceability |
+
 

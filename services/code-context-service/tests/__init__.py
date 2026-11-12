@@ -1,1 +1,1 @@
-"""Code Context Service test suite package."""
+"""Test suite package for CodeBridge Code Context Service."""

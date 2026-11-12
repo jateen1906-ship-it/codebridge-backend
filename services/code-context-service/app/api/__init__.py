@@ -1,1 +1,1 @@
-"""Code Context Service API package."""
+"""API package exports for Code Context Service."""

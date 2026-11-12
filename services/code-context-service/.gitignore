@@ -1,0 +1,5 @@
+chroma_data/
+*.db
+*.sqlite
+*.sqlite3
+

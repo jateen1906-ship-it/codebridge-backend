@@ -110,4 +110,17 @@ Routed through API Gateway `/api/v1/projects/{project_id}/github` *(priority `10
 | `GET` | `/api/v1/projects/{project_id}/github/contents` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RESOURCE_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
 | `GET` | `/api/v1/projects/{project_id}/github/commits` | `OWNER` (must own project) | `200 OK` | `INVALID_PATH`, `INVALID_REF`, `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_REPOSITORY_NOT_FOUND`, `GITHUB_RATE_LIMITED`, `UPSTREAM_TIMEOUT` |
 
+## 8. Implemented Domain Endpoints — Code Context Service (Phase 5)
+
+Routed through API Gateway `/api/v1/code-context` -> `code-context-service` (`:8004`) without stripping `/api/v1`. Root operational probes `GET /health` and `GET /ready` are exposed directly by `code-context-service`.
+
+| Method | Path | Auth / Role Required | Success Status | Key Error Codes |
+| :--- | :--- | :--- | :---: | :--- |
+| `POST` | `/api/v1/code-context/projects/{project_id}/index` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `REPOSITORY_NOT_CONNECTED`, `INDEXING_IN_PROGRESS`, `INDEX_LIMIT_EXCEEDED`, `EMBEDDING_PROVIDER_UNAVAILABLE`, `GITHUB_SERVICE_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/reindex` | `OWNER` (must own project) | `200 OK` | Same as `/index` (preserves active index if build fails) |
+| `GET` | `/api/v1/code-context/projects/{project_id}/index/status` | `OWNER` (own), actively assigned `FREELANCER`, `ADMIN` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `PROJECT_SERVICE_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/query` | `OWNER` (own), actively assigned `FREELANCER` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `VALIDATION_ERROR`, `EMBEDDING_PROVIDER_UNAVAILABLE`, `LLM_PROVIDER_UNAVAILABLE` |
+| `POST` | `/api/v1/code-context/projects/{project_id}/insights/generate` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `LLM_PROVIDER_UNAVAILABLE` |
+| `GET` | `/api/v1/code-context/projects/{project_id}/insights` | `OWNER` (own), actively assigned `FREELANCER`, `ADMIN` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND` |
+
 

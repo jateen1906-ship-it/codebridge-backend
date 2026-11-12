@@ -50,14 +50,13 @@ Owns external source-control integration with GitHub via **GitHub OAuth App** an
 - One-repository-per-project linking & lifecycle management (`POST /api/v1/projects/{project_id}/github/connect`, `DELETE .../disconnect`, `GET .../status`)
 - Bounded read-only repository access (`GET .../branches`, `GET .../contents`, `GET .../commits`) without cloning or workspace mutations
 
-### 4. `code-context-service` (`8004`)
-Owns repository intelligence, retrieval-augmented code understanding, and repository health insights.
-- Repository analysis
-- Code understanding
-- Retrieval-Augmented Generation (RAG)
-- AI code insights
-- Documentation retrieval
-- Repository health reports
+### 4. `code-context-service` (`8004`) — Implemented (Phase 5)
+Owns repository intelligence, semantic code indexing, grounded RAG retrieval, and repository health insights:
+- Synchronous Identity & Project Service authorization (including strict active-assignment checks for `FREELANCER` access)
+- Read-only repository ingestion exclusively via `github-service` (`/status`, `/branches`, `/contents`) with secret filtering and bounded traversal/size caps
+- Language-aware LangChain code chunking with line-range tracking and isolated per-project versioned ChromaDB collections
+- Grounded semantic Q&A (`POST /api/v1/code-context/projects/{project_id}/query`) with citation validation and prompt-injection defense
+- Deterministic repository health diagnostics & optional labeled AI architectural insights (`POST .../insights/generate`, `GET .../insights`)
 
 ### 5. `workspace-service` (`8005`)
 Owns isolated developer execution environments for working on assigned tasks.
