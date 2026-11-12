@@ -44,3 +44,12 @@ Because distributed transactions (2PC) and message-broker sagas are intentionall
 - Cross-service workflows (for example, triggering an audit log entry on `audit-service` or notifying a user via `notification-service`) are invoked synchronously over HTTP/REST with clear failure handling defined per workflow.
 - Critical state ownership always remains single-writer: only `payment-service` writes payment/escrow records, only `project-service` writes task state, only `identity-service` writes identity/role records, etc.
 
+## 5. Implemented Phase 4 Schema Summary — `github-service` (`codebridge_github`)
+
+| Table | Purpose | Key Constraints |
+| :--- | :--- | :--- |
+| `github_connections` | Owner GitHub user ID, login, scopes, lifecycle status, and AES-256-GCM `encrypted_access_token` | Partial unique index `uq_github_connections_active_owner` on `(owner_id) WHERE status = 'ACTIVE'`; status `ACTIVE`, `DISCONNECTED`, `REVOKED` |
+| `oauth_states` | Short-lived, single-use SHA-256 `state_hash` bound to `(owner_id, project_id)` | Unique `state_hash`, atomic `consumed_at` conditional update prior to OAuth code exchange |
+| `project_repositories` | Project-to-repository association and authoritative GitHub repository metadata | FK `github_connection_id -> github_connections.id (ON DELETE RESTRICT)`, partial unique index `uq_project_repositories_one_active_per_project` on `(project_id) WHERE connection_status = 'ACTIVE'` |
+
+

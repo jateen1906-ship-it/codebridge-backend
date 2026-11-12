@@ -1,0 +1,218 @@
+"""Synchronous HTTP/REST client for Project Service ownership and workflow state validation."""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import httpx
+from pydantic import BaseModel, ConfigDict, ValidationError as PydanticValidationError
+
+from app.core.exceptions import (
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+    UpstreamServiceUnavailableError,
+)
+from app.core.logging import get_logger
+from app.core.security import REQUEST_ID_HEADER
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
+
+logger = get_logger("clients.project")
+
+_PROJECT_BY_ID_TEMPLATE = "/api/v1/projects/{project_id}"
+_ACTIVE_WORKFLOW_STATUSES = frozenset({"ASSIGNED", "IN_PROGRESS", "CHANGES_REQUESTED"})
+
+
+class _ActiveAssignmentPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: uuid.UUID
+    freelancer_id: uuid.UUID
+    status: str
+
+
+class _ProjectDetailPayload(BaseModel):
+    """Schema matching Project Service GET /api/v1/projects/{project_id} ProjectResponse."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    status: str
+    active_assignment: _ActiveAssignmentPayload | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSummary:
+    """Verified project metadata fetched from Project Service."""
+
+    id: uuid.UUID
+    owner_id: uuid.UUID
+    status: str
+    has_active_assignment: bool
+
+    @property
+    def has_active_workflow(self) -> bool:
+        """Return True when disconnecting a repository would disrupt an active workflow."""
+        return self.has_active_assignment or self.status.upper() in _ACTIVE_WORKFLOW_STATUSES
+
+
+class ProjectClient:
+    """Reusable lifespan-managed HTTPX client communicating strictly with Project Service."""
+
+    def __init__(
+        self,
+        settings: Settings,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._base_url = settings.PROJECT_SERVICE_URL.rstrip("/")
+        self._timeout_seconds = settings.SERVICE_CLIENT_TIMEOUT_SECONDS
+        self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._client is not None and not self._client.is_closed
+
+    async def startup(self) -> None:
+        """Initialize the pooled HTTPX AsyncClient."""
+        if self._client is None or self._client.is_closed:
+            timeout = httpx.Timeout(
+                timeout=self._timeout_seconds,
+                connect=min(2.0, self._timeout_seconds),
+            )
+            limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+            client_kwargs: dict[str, object] = {
+                "base_url": self._base_url,
+                "timeout": timeout,
+                "limits": limits,
+                "follow_redirects": False,
+            }
+            if self._transport is not None:
+                client_kwargs["transport"] = self._transport
+            self._client = httpx.AsyncClient(**client_kwargs)  # type: ignore[arg-type]
+
+    async def close(self) -> None:
+        """Close the HTTPX AsyncClient cleanly on shutdown."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+
+    def _require_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            raise UpstreamServiceUnavailableError(
+                "Project verification service is unavailable.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            )
+        return self._client
+
+    async def get_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        bearer_token: str,
+        request_id: str,
+    ) -> ProjectSummary:
+        """Fetch and verify project access and ownership state via Project Service."""
+        client = self._require_client()
+        canonical_id = str(uuid.UUID(str(project_id)))
+        target_path = _PROJECT_BY_ID_TEMPLATE.format(project_id=canonical_id)
+
+        try:
+            response = await client.get(
+                target_path,
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    REQUEST_ID_HEADER: request_id,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "Project Service verification timed out",
+                extra={
+                    "event": "project_client_timeout",
+                    "target_service": "project-service",
+                    "project_id": canonical_id,
+                    "error_code": "PROJECT_SERVICE_UNAVAILABLE",
+                },
+            )
+            raise UpstreamServiceUnavailableError(
+                "Project verification service is temporarily unavailable.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            ) from exc
+        except httpx.RequestError as exc:
+            logger.warning(
+                "Failed to connect to Project Service",
+                extra={
+                    "event": "project_client_connect_error",
+                    "target_service": "project-service",
+                    "project_id": canonical_id,
+                    "error_code": "PROJECT_SERVICE_UNAVAILABLE",
+                },
+            )
+            raise UpstreamServiceUnavailableError(
+                "Project verification service is temporarily unavailable.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            ) from exc
+
+        if response.status_code == 401:
+            raise UnauthorizedError("Invalid or expired authentication token.")
+        if response.status_code == 403:
+            raise ForbiddenError("You do not have permission to access this project.")
+        if response.status_code == 404:
+            raise NotFoundError("Project not found.", error_code="PROJECT_NOT_FOUND")
+        if response.status_code != 200:
+            logger.warning(
+                "Project Service returned unexpected status during verification",
+                extra={
+                    "event": "project_client_unexpected_status",
+                    "target_service": "project-service",
+                    "project_id": canonical_id,
+                    "status_code": response.status_code,
+                    "error_code": "PROJECT_SERVICE_UNAVAILABLE",
+                },
+            )
+            raise UpstreamServiceUnavailableError(
+                "Project verification service is temporarily unavailable.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            )
+
+        try:
+            parsed = _ProjectDetailPayload.model_validate(response.json())
+        except (ValueError, PydanticValidationError) as exc:
+            logger.warning(
+                "Malformed project response from Project Service",
+                extra={
+                    "event": "project_client_malformed_response",
+                    "target_service": "project-service",
+                    "project_id": canonical_id,
+                    "error_code": "PROJECT_SERVICE_UNAVAILABLE",
+                },
+            )
+            raise UpstreamServiceUnavailableError(
+                "Project verification returned an invalid response.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            ) from exc
+
+        if parsed.id != uuid.UUID(canonical_id):
+            raise UpstreamServiceUnavailableError(
+                "Project verification returned mismatched project metadata.",
+                error_code="PROJECT_SERVICE_UNAVAILABLE",
+            )
+
+        has_active_assignment = (
+            parsed.active_assignment is not None
+            and parsed.active_assignment.status.upper() == "ACTIVE"
+        )
+        return ProjectSummary(
+            id=parsed.id,
+            owner_id=parsed.owner_id,
+            status=parsed.status,
+            has_active_assignment=has_active_assignment,
+        )
+

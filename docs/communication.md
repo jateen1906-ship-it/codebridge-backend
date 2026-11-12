@@ -69,3 +69,10 @@ Because calls are synchronous, upstream callers must handle downstream failures 
 5. **Retry Discipline:**
    - Automatic retries must **only** be considered for strictly idempotent `GET` requests on transient network errors, never blindly on state-mutating `POST`/`PATCH`/`DELETE` calls unless an explicit idempotency key is implemented.
 
+## 6. Implemented Phase 4 Synchronous Integrations — `github-service`
+
+- **`github-service` -> `identity-service` (`GET /api/v1/auth/me`):** Synchronous token verification forwarding caller `Authorization` header and `X-Request-ID` via pooled `IdentityClient`; fails closed with `503 IDENTITY_SERVICE_UNAVAILABLE`.
+- **`github-service` -> `project-service` (`GET /api/v1/projects/{project_id}`):** Synchronous project ownership, read-visibility authorization, and active-workflow verification forwarding caller `Authorization` header and `X-Request-ID` via pooled `ProjectClient`; fails closed with `503 PROJECT_SERVICE_UNAVAILABLE`.
+- **`github-service` -> GitHub (`https://github.com/login/oauth/access_token`, `https://api.github.com`):** Fixed-host OAuth token exchange and bounded read-only REST API client (`GitHubHTTPClient`, `follow_redirects=False`) with timeout (`504`) and rate-limit (`429`) translation.
+
+
