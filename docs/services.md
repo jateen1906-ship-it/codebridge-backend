@@ -1,138 +1,38 @@
 # CodeBridge Microservices Catalog
 
-> **Phase 0 Note:** Services listed below are initialized as isolated directory structures only. Business logic, endpoints, and persistence are deferred to service-specific implementation phases.
+All **13 services** (`api-gateway` + 12 domain microservices) are implemented as independent FastAPI services on ports `8000`–`8012`.
 
-## Service Registry & Planned Ports
+## Service Registry & Ports
 
-| # | Service | Planned Local Port | Directory |
-| :-: | :--- | :---: | :--- |
-| 0 | `api-gateway` (Edge Gateway) | `8000` | `api-gateway/` |
-| 1 | `identity-service` | `8001` | `services/identity-service/` |
-| 2 | `project-service` | `8002` | `services/project-service/` |
-| 3 | `github-service` | `8003` | `services/github-service/` |
-| 4 | `code-context-service` | `8004` | `services/code-context-service/` |
-| 5 | `workspace-service` | `8005` | `services/workspace-service/` |
-| 6 | `review-service` | `8006` | `services/review-service/` |
-| 7 | `verification-service` | `8007` | `services/verification-service/` |
-| 8 | `payment-service` | `8008` | `services/payment-service/` |
-| 9 | `notification-service` | `8009` | `services/notification-service/` |
-| 10 | `admin-service` | `8010` | `services/admin-service/` |
-| 11 | `audit-service` | `8011` | `services/audit-service/` |
-| 12 | `observability-service` | `8012` | `services/observability-service/` |
+| # | Service | Port | Owned Database | Directory |
+| :-: | :--- | :---: | :--- | :--- |
+| 0 | `api-gateway` (Edge Gateway) | `8000` | Stateless | `api-gateway/` |
+| 1 | `identity-service` | `8001` | `codebridge_identity` | `services/identity-service/` |
+| 2 | `project-service` | `8002` | `codebridge_project` | `services/project-service/` |
+| 3 | `github-service` | `8003` | `codebridge_github` | `services/github-service/` |
+| 4 | `code-context-service` | `8004` | `codebridge_code_context` | `services/code-context-service/` |
+| 5 | `workspace-service` | `8005` | `codebridge_workspace` | `services/workspace-service/` |
+| 6 | `review-service` | `8006` | `codebridge_review` | `services/review-service/` |
+| 7 | `verification-service` | `8007` | `codebridge_verification` | `services/verification-service/` |
+| 8 | `payment-service` | `8008` | `codebridge_payment` | `services/payment-service/` |
+| 9 | `notification-service` | `8009` | `codebridge_notification` | `services/notification-service/` |
+| 10 | `admin-service` | `8010` | `codebridge_admin` | `services/admin-service/` |
+| 11 | `audit-service` | `8011` | `codebridge_audit` | `services/audit-service/` |
+| 12 | `observability-service` | `8012` | `codebridge_observability` | `services/observability-service/` |
 
 ---
 
 ## Microservice Responsibilities
 
-### 1. `identity-service` (`8001`)
-Owns user authentication, identity lifecycle, and access roles across the platform.
-- User identity management
-- User profiles
-- Freelancer profiles
-- Authentication
-- Role-based access control (RBAC)
-- Owner, freelancer, and admin identities
-
-### 2. `project-service` (`8002`)
-Owns the core project and task lifecycle for software completion workflows.
-- Project creation and management
-- Project requirements
-- Tasks and task breakdown
-- Freelancer assignments
-- Deadlines
-- Project lifecycle state transitions
-
-### 3. `github-service` (`8003`) — Implemented (Phase 4)
-Owns external source-control integration with GitHub via **GitHub OAuth App** and read-only GitHub REST APIs (`https://api.github.com`):
-- Single-use CSRF OAuth state initiation & callback exchange (`GET /api/v1/github/oauth/authorize`, `GET /api/v1/github/oauth/callback`)
-- AES-256-GCM encrypted OAuth credential storage bound to `owner_id` (plus account disconnect `DELETE /api/v1/github/connection`)
-- Owner repository discovery (`GET /api/v1/github/repositories`)
-- One-repository-per-project linking & lifecycle management (`POST /api/v1/projects/{project_id}/github/connect`, `DELETE .../disconnect`, `GET .../status`)
-- Bounded read-only repository access (`GET .../branches`, `GET .../contents`, `GET .../commits`) without cloning or workspace mutations
-
-### 4. `code-context-service` (`8004`) — Implemented (Phase 5)
-Owns repository intelligence, semantic code indexing, grounded RAG retrieval, and repository health insights:
-- Synchronous Identity & Project Service authorization (including strict active-assignment checks for `FREELANCER` access)
-- Read-only repository ingestion exclusively via `github-service` (`/status`, `/branches`, `/contents`) with secret filtering and bounded traversal/size caps
-- Language-aware LangChain code chunking with line-range tracking and isolated per-project versioned ChromaDB collections
-- Grounded semantic Q&A (`POST /api/v1/code-context/projects/{project_id}/query`) with citation validation and prompt-injection defense
-- Deterministic repository health diagnostics & optional labeled AI architectural insights (`POST .../insights/generate`, `GET .../insights`)
-
-### 5. `workspace-service` (`8005`)
-Owns isolated developer execution environments for working on assigned tasks.
-- Isolated coding workspaces
-- Workspace creation
-- Workspace lifecycle management
-- Start and stop operations
-- Docker integration (planned in a future phase)
-
-### 6. `review-service` (`8006`)
-Owns task submission intake and owner review/approval workflows.
-- Task submissions
-- Submission records
-- Owner review workflows
-- Review feedback
-- Revision requests
-- Approval workflow
-
-### 7. `verification-service` (`8007`)
-Owns automated verification of submitted work prior to or alongside owner approval.
-- Automated tests execution coordination
-- Acceptance testing
-- Code validation
-- Test results tracking
-- Verification reports
-
-### 8. `payment-service` (`8008`)
-Owns simulated financial escrow workflows and payment tracking.
-- Simulated escrow accounts/holds
-- Payment authorization
-- Payment hold
-- Payment release
-- Refund simulation
-- Payment audit records
-
-### 9. `notification-service` (`8009`)
-Owns user-facing alerts, announcements, and notification history.
-- User notifications
-- System announcements
-- Notification history
-- Future WebSocket delivery support
-
-### 10. `admin-service` (`8010`)
-Owns platform moderation and administrative controls.
-- User moderation
-- Project moderation
-- Moderation reports
-- Administrative operations
-
-### 11. `audit-service` (`8011`)
-Owns immutable platform activity records and compliance/audit trails.
-- Activity logs
-- User activity records
-- Project activity records
-- Workspace access records
-- Audit history querying
-
-### 12. `observability-service` (`8012`)
-Owns platform-wide operational visibility across microservices.
-- Health monitoring
-- Readiness monitoring
-- Service metrics aggregation
-- Operational monitoring
-
----
-
-## Internal Service Anatomy
-
-Every business microservice follows a consistent internal layered package layout:
-
-- `app/api/routes/` — FastAPI HTTP route handlers
-- `app/core/` — Service settings, startup hooks, and internal config
-- `app/models/` — SQLAlchemy ORM models (owned exclusively by that service)
-- `app/schemas/` — Pydantic request/response schemas
-- `app/repositories/` — Data access layer interacting with the service's own DB
-- `app/services/` — Domain business logic
-- `app/clients/` — HTTPX clients for calling peer microservices synchronously
-- `tests/` — Service-scoped Pytest unit and API tests
-
+1. **`identity-service` (`8001`):** Argon2 user authentication, HS256 JWT access/refresh token rotation with family revocation on reuse, user & freelancer profiles, strict RBAC (`OWNER`, `FREELANCER`, `ADMIN`), and restricted `/auth/admin/users` management.
+2. **`project-service` (`8002`):** Project creation/publishing/updates/cancellation, structured `ProjectRequirement`s, transactional single-freelancer assignment (`select-freelancer`), lifecycle state transitions (`OPEN -> ASSIGNED -> IN_PROGRESS / CHANGES_REQUESTED -> COMPLETED`), and review-driven workflow synchronization.
+3. **`github-service` (`8003`):** GitHub OAuth App single-use CSRF state flow, AES-256-GCM encrypted token storage, owner repository listing, one-repo-per-project linking, bounded read-only tree/file/commit queries, and validated zipball repository snapshots (`/snapshot`).
+4. **`code-context-service` (`8004`):** Asynchronous/bounded repository ingestion exclusively via `github-service`, secret filtering, LangChain language-aware chunking into per-project ChromaDB collections, grounded semantic RAG query (`POST /query`), and architectural health insights.
+5. **`workspace-service` (`8005`):** Isolated developer execution workspaces with zip-slip/symlink/decompression-bomb protection, path containment, Docker (`--network none`, CPU/RAM/PIDs caps) + mock runtime adapter, container start/stop/refresh/logs/destroy lifecycle, and TTL cleanup.
+6. **`review-service` (`8006`):** Versioned freelancer work submissions (`DRAFT -> SUBMITTED -> IN_REVIEW -> CHANGES_REQUESTED / APPROVED / REJECTED`), file change manifests, inline comments, owner review decisions, authoritative `project-service` status sync, and notification/audit emission.
+7. **`verification-service` (`8007`):** Tamper-evident `VerifiedWorkRecord` issuance strictly gated on `review-service` `APPROVED` status, canonical JSON SHA-256 hashing + HMAC-SHA256 signing, opaque `cbv_*` unauthenticated public proof lookup (zero PII), signature verification, and formal `REVOKED`/`CORRECTED` lifecycle.
+8. **`payment-service` (`8008`):** Simulated escrow accounts (`PENDING -> FUNDED -> HELD -> RELEASED / REFUNDED / CANCELLED`), `project-service` budget/currency alignment, SHA-256 payload-bound `Idempotency-Key` protection, hard release block unless `review-service` confirms `APPROVED`, immutable ledger transactions, and refund workflows.
+9. **`notification-service` (`8009`):** Authenticated internal/ADMIN notification event ingestion (`X-Service-Key` constant-time check) with `(user_id, idempotency_key)` deduplication, user preferences, mock email delivery logs, and user inbox read/read-all endpoints.
+10. **`admin-service` (`8010`):** Strict `ADMIN`-only moderation, cross-service user suspension/restoration via `identity-service`, platform project/audit inspection, abuse report creation & resolution, and immutable admin action log.
+11. **`audit-service` (`8011`):** Append-only `AuditLog` ingestion (zero `PUT`/`PATCH`/`DELETE` routes), recursive secret/token/DB-URL scrubbing, `ADMIN`-global / user-scoped query filtering, and project-member-scoped audit trail retrieval.
+12. **`observability-service` (`8012`):** Concurrent `/health` & `/ready` probes across `api-gateway` and all 12 microservices, secret-scrubbed telemetry ingestion (`X-Service-Key` or `ADMIN`), aggregated per-service request/error/p95 latency metrics, and sanitized error log streams (`ADMIN`).

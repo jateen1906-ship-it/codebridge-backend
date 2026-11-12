@@ -17,3 +17,14 @@ async def health_check(request: Request) -> dict[str, str]:
         "version": settings.APP_VERSION,
     }
 
+
+@router.get("/ready", summary="API Gateway readiness check")
+async def readiness_check(request: Request) -> dict[str, str]:
+    """Check API Gateway HTTP client readiness."""
+    client_open = bool(getattr(request.app.state.http_client, "is_open", False))
+    return {
+        "status": "ready" if client_open else "not_ready",
+        "service": "api-gateway",
+        "version": request.app.state.settings.APP_VERSION,
+    }
+

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 
@@ -27,6 +27,9 @@ GITHUB_API_BASE_URL = "https://api.github.com"
 _GITHUB_API_VERSION = "2022-11-28"
 _USER_AGENT = "CodeBridge-GitHub-Service/1.0"
 _MAX_RAW_RESPONSE_BYTES = 1_048_576  # 1 MiB transport safety ceiling
+_ALLOWED_ARCHIVE_REDIRECT_HOSTS = frozenset(
+    {"codeload.github.com", "objects.githubusercontent.com", "github.com"}
+)
 
 
 class GitHubHTTPClient:
@@ -53,8 +56,11 @@ class GitHubHTTPClient:
                 connect=min(3.0, self._settings.GITHUB_HTTP_TIMEOUT_SECONDS),
             )
             limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+            base_url = GITHUB_API_BASE_URL
+            if self._settings.APP_ENV == "test" and self._settings.GITHUB_TEST_API_BASE_URL:
+                base_url = self._settings.GITHUB_TEST_API_BASE_URL.rstrip("/")
             client_kwargs: dict[str, object] = {
-                "base_url": GITHUB_API_BASE_URL,
+                "base_url": base_url,
                 "timeout": timeout,
                 "limits": limits,
                 "follow_redirects": False,
@@ -89,9 +95,12 @@ class GitHubHTTPClient:
     async def exchange_code_for_token(self, *, code: str) -> tuple[str, str]:
         """Exchange an OAuth authorization code with https://github.com/login/oauth/access_token."""
         client = self._require_client()
+        token_url = GITHUB_OAUTH_TOKEN_URL
+        if self._settings.APP_ENV == "test" and self._settings.GITHUB_TEST_OAUTH_TOKEN_URL:
+            token_url = self._settings.GITHUB_TEST_OAUTH_TOKEN_URL
         try:
             response = await client.post(
-                GITHUB_OAUTH_TOKEN_URL,
+                token_url,
                 headers={
                     "Accept": "application/json",
                     "User-Agent": _USER_AGENT,
@@ -281,6 +290,105 @@ class GitHubHTTPClient:
             raise GitHubUpstreamError("GitHub commits response had unexpected shape.")
         has_next = _has_next_page(headers.get("link"))
         return [item for item in data if isinstance(item, dict)], has_next
+
+    async def download_repository_archive(
+        self,
+        *,
+        access_token: str,
+        full_name: str,
+        ref: str | None = None,
+        max_bytes: int = 20_971_520,
+    ) -> bytes:
+        """Download a bounded read-only zipball archive from fixed https://api.github.com."""
+        clean_full_name = validate_repo_full_name(full_name)
+        owner_seg, repo_seg = clean_full_name.split("/", 1)
+        base = f"/repos/{quote(owner_seg, safe='')}/{quote(repo_seg, safe='')}/zipball"
+        path = f"{base}/{quote(ref, safe='')}" if ref else base
+
+        client = self._require_client()
+        try:
+            response = await client.get(
+                path,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": _GITHUB_API_VERSION,
+                    "User-Agent": _USER_AGENT,
+                },
+            )
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("location", "").strip()
+                parsed_loc = urlparse(location)
+                if (
+                    parsed_loc.scheme != "https"
+                    or (parsed_loc.hostname or "").lower() not in _ALLOWED_ARCHIVE_REDIRECT_HOSTS
+                ):
+                    raise GitHubUpstreamError(
+                        "GitHub returned an unverified archive redirect destination.",
+                        error_code="GITHUB_UPSTREAM_ERROR",
+                    )
+                timeout = httpx.Timeout(
+                    timeout=self._settings.GITHUB_HTTP_TIMEOUT_SECONDS,
+                    connect=min(3.0, self._settings.GITHUB_HTTP_TIMEOUT_SECONDS),
+                )
+                cdn_kwargs: dict[str, object] = {
+                    "timeout": timeout,
+                    "follow_redirects": False,
+                }
+                if self._transport is not None:
+                    cdn_kwargs["transport"] = self._transport
+                async with httpx.AsyncClient(**cdn_kwargs) as cdn_client:  # type: ignore[arg-type]
+                    response = await cdn_client.get(
+                        location,
+                        headers={"User-Agent": _USER_AGENT},
+                    )
+        except httpx.TimeoutException as exc:
+            raise UpstreamTimeoutError("GitHub repository archive download timed out.") from exc
+        except httpx.RequestError as exc:
+            raise GitHubUpstreamError("Unable to download repository archive from GitHub.") from exc
+
+        if response.status_code == 429 or _is_rate_limited_response(response):
+            raise GitHubRateLimitError()
+        if response.status_code == 401:
+            raise GitHubUpstreamError(
+                "Stored GitHub OAuth credential is invalid or revoked.",
+                error_code="GITHUB_TOKEN_INVALID",
+            )
+        if response.status_code == 403:
+            raise GitHubUpstreamError(
+                "GitHub denied permission to download this repository archive.",
+                error_code="GITHUB_ACCESS_DENIED",
+            )
+        if response.status_code == 404:
+            raise NotFoundError(
+                "Requested GitHub repository archive or ref was not found.",
+                error_code="GITHUB_RESOURCE_NOT_FOUND",
+            )
+        if response.status_code >= 400:
+            raise GitHubUpstreamError(
+                "GitHub API failed to download repository archive.",
+                error_code="GITHUB_UPSTREAM_ERROR",
+            )
+
+        content_length_raw = response.headers.get("content-length")
+        if content_length_raw and content_length_raw.isdigit() and int(content_length_raw) > max_bytes:
+            raise GitHubUpstreamError(
+                "Repository archive exceeds maximum allowed snapshot size.",
+                error_code="GITHUB_ARCHIVE_TOO_LARGE",
+            )
+
+        archive_bytes = response.content
+        if len(archive_bytes) > max_bytes:
+            raise GitHubUpstreamError(
+                "Repository archive exceeds maximum allowed snapshot size.",
+                error_code="GITHUB_ARCHIVE_TOO_LARGE",
+            )
+        if not archive_bytes.startswith(b"PK"):
+            raise GitHubUpstreamError(
+                "GitHub archive response was not a valid zip archive.",
+                error_code="GITHUB_UPSTREAM_ERROR",
+            )
+        return archive_bytes
 
     async def _api_get(
         self,

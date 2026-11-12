@@ -424,3 +424,19 @@ class GitHubAPIService:
             has_next_page=has_next_page,
         )
 
+    async def download_repository_snapshot(
+        self,
+        *,
+        connection: GitHubConnection,
+        full_name: str,
+        ref: str | None,
+    ) -> bytes:
+        """Download a bounded repository zip snapshot using the owner's decrypted OAuth token."""
+        access_token = self._decrypt_active_token(connection)
+        return await self._github_client.download_repository_archive(
+            access_token=access_token,
+            full_name=full_name,
+            ref=ref,
+            max_bytes=self._settings.GITHUB_ARCHIVE_MAX_BYTES,
+        )
+

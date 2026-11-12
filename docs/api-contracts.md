@@ -123,4 +123,24 @@ Routed through API Gateway `/api/v1/code-context` -> `code-context-service` (`:8
 | `POST` | `/api/v1/code-context/projects/{project_id}/insights/generate` | `OWNER` (must own project) | `201 Created` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND`, `LLM_PROVIDER_UNAVAILABLE` |
 | `GET` | `/api/v1/code-context/projects/{project_id}/insights` | `OWNER` (own), actively assigned `FREELANCER`, `ADMIN` | `200 OK` | `UNAUTHORIZED`, `FORBIDDEN`, `PROJECT_NOT_FOUND`, `INDEX_NOT_FOUND` |
 
+## 9. Implemented Domain Endpoints — Phases 6–13
+
+- **`workspace-service` (`/api/v1/workspace`, `:8005`):**
+  - `POST /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/projects/{project_id}`, `GET /api/v1/workspace/{workspace_id}`, `POST /api/v1/workspace/{workspace_id}/{start,stop,refresh}`, `GET /api/v1/workspace/{workspace_id}/logs`, `DELETE /api/v1/workspace/{workspace_id}`, `POST /api/v1/workspace/cleanup-expired`
+- **`review-service` (`/api/v1/submissions`, `/api/v1/review`, `:8006`):**
+  - `POST /api/v1/submissions/projects/{project_id}`, `GET /api/v1/submissions/projects/{project_id}`, `GET /api/v1/submissions/{submission_id}`, `POST /api/v1/submissions/{submission_id}/{submit,withdraw,comments}`
+  - `POST /api/v1/review/submissions/{submission_id}/{start,decision}`, `GET /api/v1/review/submissions/{submission_id}`, `GET /api/v1/review/projects/{project_id}`
+- **`verification-service` (`/api/v1/verification`, `:8007`):**
+  - `POST /api/v1/verification/records`, `GET /api/v1/verification/public/{public_verification_id}` *(unauthenticated, sanitized)*, `GET /api/v1/verification/projects/{project_id}`, `GET /api/v1/verification/records/{record_id}`, `POST /api/v1/verification/records/{record_id}/{verify,revoke}`
+- **`payment-service` (`/api/v1/payment`, `:8008`):**
+  - `POST /api/v1/payment/projects/{project_id}/escrow`, `POST /api/v1/payment/escrows/{escrow_id}/{fund,hold,release,refund,cancel}` *(supports `Idempotency-Key`)*, `GET /api/v1/payment/projects/{project_id}`, `GET /api/v1/payment/escrows/{escrow_id}`, `GET /api/v1/payment/escrows/{escrow_id}/transactions`
+- **`notification-service` (`/api/v1/notifications`, `:8009`):**
+  - `POST /api/v1/notifications/events` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/notifications`, `POST /api/v1/notifications/{notification_id}/read`, `POST /api/v1/notifications/read-all`, `GET/PUT /api/v1/notifications/preferences`
+- **`admin-service` (`/api/v1/admin`, `:8010`, strictly `ADMIN`):**
+  - `GET /api/v1/admin/users`, `POST /api/v1/admin/users/{user_id}/{suspend,restore}`, `GET /api/v1/admin/projects`, `GET /api/v1/admin/audit-logs`, `POST/GET /api/v1/admin/reports`, `POST /api/v1/admin/reports/{report_id}/resolve`, `GET /api/v1/admin/actions`
+- **`audit-service` (`/api/v1/audit`, `:8011`, append-only):**
+  - `POST /api/v1/audit/events` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/audit/events`, `GET /api/v1/audit/projects/{project_id}`
+- **`observability-service` (`/api/v1/observability`, `:8012`):**
+  - `GET /api/v1/observability/services` *(`ADMIN`)*, `POST /api/v1/observability/telemetry` *(`X-Service-Key` or `ADMIN`)*, `GET /api/v1/observability/metrics` *(`ADMIN`)*, `GET /api/v1/observability/errors` *(`ADMIN`)*
+
 

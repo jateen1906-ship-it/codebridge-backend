@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     GITHUB_API_MAX_PAGES: int = Field(default=5, ge=1, le=20)
     GITHUB_CONTENTS_MAX_BYTES: int = Field(default=262144, ge=1024, le=5242880)
     GITHUB_CONTENTS_MAX_ENTRIES: int = Field(default=200, ge=1, le=1000)
+    GITHUB_ARCHIVE_MAX_BYTES: int = Field(default=20_971_520, ge=1024, le=104_857_600)
+
+    # Strictly test-only base URL overrides for live E2E test harness against a local mock GitHub HTTP server
+    GITHUB_TEST_API_BASE_URL: str | None = None
+    GITHUB_TEST_OAUTH_TOKEN_URL: str | None = None
 
     @property
     def encryption_key_bytes(self) -> bytes:
@@ -175,6 +180,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _enforce_environment_security(self) -> "Settings":
+        if self.APP_ENV != "test" and (
+            self.GITHUB_TEST_API_BASE_URL is not None or self.GITHUB_TEST_OAUTH_TOKEN_URL is not None
+        ):
+            raise ValueError(
+                "GITHUB_TEST_API_BASE_URL and GITHUB_TEST_OAUTH_TOKEN_URL are forbidden outside APP_ENV=test."
+            )
         if self.APP_ENV in {"production", "staging"}:
             if self.DATABASE_URL == _DEV_DEFAULT_DATABASE_URL or "change_me" in self.DATABASE_URL:
                 raise ValueError(

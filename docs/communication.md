@@ -1,85 +1,27 @@
 # Inter-Service Communication Design
 
-> **Phase 0 Note:** This document defines the communication protocol, client conventions, timeout standards, and error propagation rules to be implemented in later phases.
-
 ## 1. Synchronous HTTP/REST Model
 
-All communication between:
-- `api-gateway` and downstream microservices, and
-- any microservice and a peer microservice
+All communication between `api-gateway` and downstream microservices, as well as every service-to-service interaction, uses **synchronous HTTP/REST over JSON** via **`httpx.AsyncClient`** encapsulated inside each service's `app/clients/` package. Message brokers (RabbitMQ, Kafka, Redis Pub/Sub) are intentionally absent.
 
-uses **synchronous HTTP/REST over JSON**.
+## 2. Standard Headers & Authentication
 
-CodeBridge explicitly **does not** use RabbitMQ, Apache Kafka, Redis Pub/Sub event buses, or an event-driven architecture. Keeping all cross-service interactions as explicit HTTP/REST calls preserves simple request tracing, clear failure semantics, and straightforward local debugging.
+- **Correlation Tracing:** `X-Request-ID` (canonical UUIDv4) is generated/validated at `api-gateway` and propagated across every downstream HTTPX request.
+- **User-Delegated Calls:** Primary domain calls forward caller `Authorization: Bearer <token>` so `identity-service` and `project-service` enforce real identity and ownership/assignment RBAC at every hop.
+- **Internal Service Intake:** `notification-service` (`POST /api/v1/notifications/events`), `audit-service` (`POST /api/v1/audit/events`), and `observability-service` (`POST /api/v1/observability/telemetry`) authenticate internal producers via constant-time `X-Service-Key` (`INTERNAL_SERVICE_KEY`) comparison (or `ADMIN` Bearer JWT).
 
-## 2. Planned HTTP Client: HTTPX
+## 3. Fail-Closed vs. Fail-Soft Fault Semantics
 
-Every component that makes outbound internal HTTP calls (`api-gateway/app/clients/` and `services/<name>/app/clients/`) will use **HTTPX** (`httpx.AsyncClient`) as the standard client library.
+- **Critical Authorization & Precondition Hops (Fail Closed):**
+  - Identity verification (`identity-service`) fails closed (`401`/`403`/`503`).
+  - `review-service` -> `project-service` approval transition sync fails closed (`503`) before committing `APPROVED` state, or maintains atomic consistency.
+  - `verification-service` -> `review-service` (`approved` check) fails closed (`409`/`503`).
+  - `payment-service` -> `review-service` (`/release` approval gate) and `project-service` (budget check) fail closed (`409`/`503`).
+  - `admin-service` -> `identity-service` user suspension/restoration fails closed (`503`).
+- **Telemetry Side-Effect Hops (Fail Soft):**
+  - Notification and Audit emission (`notification-service`, `audit-service`) from `review`, `verification`, `payment`, and `admin` services execute with short bounded timeouts and soft error logging so a secondary telemetry outage cannot roll back a committed primary financial/review transaction.
 
-### Client Design Principles (Planned)
+## 4. Timeout & Resilience Rules
 
-- **Dedicated Client Modules:** Outbound HTTP calls must be encapsulated inside each service's `app/clients/` package rather than scattered across route handlers or domain services.
-- **Connection Pooling:** Reuse `httpx.AsyncClient` lifecycle per FastAPI application lifespan rather than instantiating a new client per request.
-- **Header Propagation:** Automatically forward `X-Request-ID` (and when applicable, verified user context headers) on every internal request.
-
-## 3. Service URL Configuration
-
-Internal service addresses must **never** be hardcoded. Every caller resolves target base URLs through environment variables defined in `.env.example` / `.env`.
-
-### Planned Local Development Ports
-
-| Environment Variable | Planned Local URL | Target Component |
-| :--- | :--- | :--- |
-| `API_GATEWAY_URL` | `http://localhost:8000` | `api-gateway` |
-| `IDENTITY_SERVICE_URL` | `http://localhost:8001` | `identity-service` |
-| `PROJECT_SERVICE_URL` | `http://localhost:8002` | `project-service` |
-| `GITHUB_SERVICE_URL` | `http://localhost:8003` | `github-service` |
-| `CODE_CONTEXT_SERVICE_URL` | `http://localhost:8004` | `code-context-service` |
-| `WORKSPACE_SERVICE_URL` | `http://localhost:8005` | `workspace-service` |
-| `REVIEW_SERVICE_URL` | `http://localhost:8006` | `review-service` |
-| `VERIFICATION_SERVICE_URL` | `http://localhost:8007` | `verification-service` |
-| `PAYMENT_SERVICE_URL` | `http://localhost:8008` | `payment-service` |
-| `NOTIFICATION_SERVICE_URL` | `http://localhost:8009` | `notification-service` |
-| `ADMIN_SERVICE_URL` | `http://localhost:8010` | `admin-service` |
-| `AUDIT_SERVICE_URL` | `http://localhost:8011` | `audit-service` |
-| `OBSERVABILITY_SERVICE_URL` | `http://localhost:8012` | `observability-service` |
-
-In containerized deployments (future Docker Compose / orchestrator), these URLs resolve via service DNS names (e.g., `http://identity-service:8001`) using the exact same environment variables.
-
-## 4. Timeout Standards
-
-Synchronous chains require strict, bounded timeouts so one slow service cannot exhaust worker concurrency across the platform.
-
-- **Default Inter-Service Timeout:** `10.0` seconds total (`connect=2.0s`, `read=8.0s`, `write=5.0s`, `pool=2.0s`), configurable via `HTTP_CLIENT_TIMEOUT_SECONDS`.
-- **Gateway Timeout Budget:** The `api-gateway` timeout must be slightly higher than (or explicitly budgeted against) single-hop service timeouts when orchestrating downstream requests.
-- **Long-Running Operations:** Operations such as repository analysis (`code-context-service`), workspace provisioning (`workspace-service`), or test execution (`verification-service`) should return an accepted resource/job reference (`202 Accepted` or status-tracked resource) and expose a status-polling endpoint rather than holding an HTTP connection open indefinitely.
-
-## 5. Error Propagation & Fault Handling
-
-Because calls are synchronous, upstream callers must handle downstream failures predictably:
-
-1. **4xx Client Errors from Downstream:**
-   - Validation, authentication, authorization, conflict, or not-found errors (`400`, `401`, `403`, `404`, `409`, `422`) returned by a microservice are surfaced cleanly by `api-gateway` (preserving the HTTP status code, standardized error envelope, and `X-Request-ID`).
-2. **5xx Upstream Failures:**
-   - Downstream `500`/`502`/`503` responses are logged with correlation metadata and surfaced to clients via `api-gateway` as `502 Bad Gateway` or `503 Service Unavailable` without leaking internal stack traces.
-3. **Timeouts (`httpx.TimeoutException`):**
-   - Translated to `504 Gateway Timeout` at the gateway or handled via domain-specific fallback/failure state in service-to-service calls.
-4. **Connection / DNS Errors (`httpx.ConnectError`):**
-   - Translated to `503 Service Unavailable`.
-5. **Retry Discipline:**
-   - Automatic retries must **only** be considered for strictly idempotent `GET` requests on transient network errors, never blindly on state-mutating `POST`/`PATCH`/`DELETE` calls unless an explicit idempotency key is implemented.
-
-## 6. Implemented Phase 4 Synchronous Integrations — `github-service`
-
-- **`github-service` -> `identity-service` (`GET /api/v1/auth/me`):** Synchronous token verification forwarding caller `Authorization` header and `X-Request-ID` via pooled `IdentityClient`; fails closed with `503 IDENTITY_SERVICE_UNAVAILABLE`.
-- **`github-service` -> `project-service` (`GET /api/v1/projects/{project_id}`):** Synchronous project ownership, read-visibility authorization, and active-workflow verification forwarding caller `Authorization` header and `X-Request-ID` via pooled `ProjectClient`; fails closed with `503 PROJECT_SERVICE_UNAVAILABLE`.
-- **`github-service` -> GitHub (`https://github.com/login/oauth/access_token`, `https://api.github.com`):** Fixed-host OAuth token exchange and bounded read-only REST API client (`GitHubHTTPClient`, `follow_redirects=False`) with timeout (`504`) and rate-limit (`429`) translation.
-
-## 7. Implemented Phase 5 Synchronous Integrations — `code-context-service`
-
-- **`code-context-service` -> `identity-service` (`GET /api/v1/auth/me`):** Synchronous token verification forwarding caller `Authorization` and `X-Request-ID`; fails closed with `503 IDENTITY_SERVICE_UNAVAILABLE`.
-- **`code-context-service` -> `project-service` (`GET /api/v1/projects/{project_id}`):** Synchronous ownership and active freelancer assignment checks forwarding caller `Authorization` and `X-Request-ID`; fails closed with `503 PROJECT_SERVICE_UNAVAILABLE`.
-- **`code-context-service` -> `github-service` (`/status`, `/branches`, `/contents`):** Sole permitted source for repository tree & file retrieval using the authenticated OWNER's bearer token; never connects directly to `https://api.github.com`.
-- **`code-context-service` -> Embedding / LLM Providers & ChromaDB:** Configurable HTTPX embedding/LLM calls (`openai`, `ollama`, `mock`, `none`) with `503 EMBEDDING_PROVIDER_UNAVAILABLE` / `503 LLM_PROVIDER_UNAVAILABLE` (or retrieval-only query fallback) and local versioned ChromaDB vector storage.
-
-
+- Service-to-service calls enforce explicit bounded connect/total timeouts (`SERVICE_CLIENT_TIMEOUT_SECONDS`, default `10.0s`; `OBSERVABILITY_PROBE_TIMEOUT_SECONDS`, default `3.0s`).
+- State-mutating escrow endpoints (`/escrow`, `/fund`, `/release`, `/refund`) enforce SHA-256 request-hash bound `Idempotency-Key` checks to reject mismatched replays (`409`) and safely return identical responses on retries.

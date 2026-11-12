@@ -204,3 +204,78 @@ async def test_contents_truncates_oversized_file_and_directory_safely(
             assert many_resp.json()["truncated"] is True
             assert len(many_resp.json()["entries"]) == 2
 
+
+@pytest.mark.asyncio
+async def test_snapshot_archive_access_control_and_redirect_safety(
+    tmp_path,
+    mock_identity_state: MockIdentityState,
+    mock_project_state: MockProjectState,
+    mock_github_state: MockGitHubState,
+) -> None:
+    import io
+    import zipfile
+
+    from tests.conftest import (
+        ASSIGNED_PROJECT_ID,
+        TEST_OTHER_FREELANCER_TOKEN,
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("alice-gh-sample-api-abc123/README.md", "# Snapshot\n")
+    valid_zip = buf.getvalue()
+    mock_github_state.snapshot_zip_bytes = valid_zip
+    mock_github_state.snapshot_redirect_url = "https://codeload.github.com/alice-gh/sample-api/zip/main"
+
+    db_file = (tmp_path / "snapshot.db").as_posix()
+    settings = build_test_settings(db_file)
+    app = create_app(
+        settings=settings,
+        identity_transport=mock_identity_state.build_transport(),
+        project_transport=mock_project_state.build_transport(),
+        github_transport=mock_github_state.build_transport(),
+    )
+    async with app.state.engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+            await connect_owner_github_account(c)
+            await c.post(
+                f"/api/v1/projects/{ASSIGNED_PROJECT_ID}/github/connect",
+                json={"github_repository_id": 1001, "full_name": "alice-gh/sample-api"},
+                headers=auth_headers(TEST_OWNER_TOKEN),
+            )
+
+            # Owner can download snapshot through safe codeload redirect
+            owner_snap = await c.get(
+                f"/api/v1/projects/{ASSIGNED_PROJECT_ID}/github/snapshot",
+                headers=auth_headers(TEST_OWNER_TOKEN),
+            )
+            assert owner_snap.status_code == 200
+            assert owner_snap.headers["content-type"].startswith("application/zip")
+            assert owner_snap.content == valid_zip
+
+            # Actively assigned freelancer can download snapshot without seeing OAuth token
+            fl_snap = await c.get(
+                f"/api/v1/projects/{ASSIGNED_PROJECT_ID}/github/snapshot",
+                headers=auth_headers(TEST_FREELANCER_TOKEN),
+            )
+            assert fl_snap.status_code == 200
+            assert fl_snap.content == valid_zip
+
+            # Other freelancer, admin, and other owner are forbidden
+            for forbidden_tok in (TEST_OTHER_FREELANCER_TOKEN, TEST_OTHER_OWNER_TOKEN, TEST_ADMIN_TOKEN):
+                denied = await c.get(
+                    f"/api/v1/projects/{ASSIGNED_PROJECT_ID}/github/snapshot",
+                    headers=auth_headers(forbidden_tok),
+                )
+                assert denied.status_code == 403
+
+            # Reject unsafe external redirect host
+            mock_github_state.snapshot_redirect_url = "https://evil.example.com/steal.zip"
+            bad_redir = await c.get(
+                f"/api/v1/projects/{ASSIGNED_PROJECT_ID}/github/snapshot",
+                headers=auth_headers(TEST_OWNER_TOKEN),
+            )
+            assert bad_redir.status_code == 502
+

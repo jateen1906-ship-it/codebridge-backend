@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.github_client import GitHubHTTPClient
@@ -19,6 +19,7 @@ from app.core.dependencies import (
     get_settings,
     require_any_authenticated,
     require_owner,
+    require_owner_or_freelancer,
 )
 from app.core.encryption import TokenEncryptionService
 from app.core.security import get_request_id
@@ -299,5 +300,58 @@ async def list_project_commits(
         page=page,
         per_page=per_page,
         request_id=get_request_id(request),
+    )
+
+
+@router.get(
+    "/snapshot",
+    summary="Download bounded repository zip snapshot (OWNER or actively assigned FREELANCER)",
+    description=(
+        "Downloads a read-only zipball archive of the connected project repository for "
+        "sandboxed workspace provisioning without ever exposing stored GitHub OAuth tokens."
+    ),
+    responses={
+        200: {"content": {"application/zip": {}}, "description": "Repository zip archive."},
+        400: {"model": ErrorResponse, "description": "Invalid Git reference."},
+        401: {"model": ErrorResponse, "description": "Unauthorized."},
+        403: {"model": ErrorResponse, "description": "Forbidden (owner or active assignee only)."},
+        404: {"model": ErrorResponse, "description": "Project or connected repository not found."},
+        429: {"model": ErrorResponse, "description": "GitHub API rate limit exceeded."},
+        502: {"model": ErrorResponse, "description": "GitHub archive download failure."},
+    },
+)
+async def download_project_repository_snapshot(
+    project_id: uuid.UUID,
+    request: Request,
+    ref: str | None = Query(default=None, description="Optional branch name, tag, or commit SHA."),
+    auth_ctx: AuthContext = Depends(require_owner_or_freelancer),
+    session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    encryption_service: TokenEncryptionService = Depends(get_encryption_service),
+    project_client: ProjectClient = Depends(get_project_client),
+    github_client: GitHubHTTPClient = Depends(get_github_client),
+) -> Response:
+    github_api_service = _build_github_api_service(settings, encryption_service, github_client)
+    service = ProjectGitHubService(
+        session=session,
+        settings=settings,
+        project_client=project_client,
+        github_api_service=github_api_service,
+    )
+    archive_bytes, full_name, resolved_ref = await service.download_snapshot(
+        project_id=project_id,
+        auth_ctx=auth_ctx,
+        raw_ref=ref,
+        request_id=get_request_id(request),
+    )
+    safe_slug = full_name.replace("/", "-")
+    return Response(
+        content=archive_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_slug}.zip"',
+            "X-Repository-Full-Name": full_name,
+            "X-Repository-Ref": resolved_ref,
+        },
     )
 

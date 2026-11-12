@@ -266,6 +266,101 @@ class ProjectService:
         )
         return self._to_project_response(cancelled, viewer=owner)
 
+    async def start_work(
+        self,
+        *,
+        project_id: uuid.UUID,
+        actor: AuthenticatedUser,
+    ) -> ProjectResponse:
+        """Transition ASSIGNED or CHANGES_REQUESTED project to IN_PROGRESS."""
+        project = await self.project_repo.get_by_id(project_id, include_relations=True)
+        if project is None:
+            raise ProjectNotFoundError()
+
+        active_assignment = self._find_active_assignment(project)
+        is_owner = actor.role == UserRole.OWNER and project.owner_id == actor.id
+        is_assigned = (
+            actor.role == UserRole.FREELANCER
+            and active_assignment is not None
+            and active_assignment.freelancer_id == actor.id
+        )
+        if not (is_owner or is_assigned):
+            raise ForbiddenError(
+                "Only the project owner or actively assigned freelancer may start work."
+            )
+
+        self.state_service.advance_to_in_progress(project)
+        await self.session.commit()
+        updated = await self.project_repo.get_by_id(project_id, include_relations=True)
+        assert updated is not None
+        logger.info(
+            "Project moved to IN_PROGRESS",
+            extra={
+                "event": "project_started",
+                "user_id": str(actor.id),
+                "role": actor.role.value,
+                "project_id": str(updated.id),
+            },
+        )
+        return self._to_project_response(updated, viewer=actor)
+
+    async def request_changes(
+        self,
+        *,
+        project_id: uuid.UUID,
+        owner: AuthenticatedUser,
+    ) -> ProjectResponse:
+        """Owner transitions IN_PROGRESS project to CHANGES_REQUESTED."""
+        if owner.role != UserRole.OWNER:
+            raise ForbiddenError("Only OWNER accounts may request project changes.")
+        project = await self.project_repo.get_by_id(project_id, include_relations=True)
+        if project is None:
+            raise ProjectNotFoundError()
+        if project.owner_id != owner.id:
+            raise ForbiddenError("Only the project owner may request project changes.")
+
+        self.state_service.request_changes(project)
+        await self.session.commit()
+        updated = await self.project_repo.get_by_id(project_id, include_relations=True)
+        assert updated is not None
+        return self._to_project_response(updated, viewer=owner)
+
+    async def complete_project(
+        self,
+        *,
+        project_id: uuid.UUID,
+        owner: AuthenticatedUser,
+        approval_verified: bool,
+    ) -> ProjectResponse:
+        """Owner completes an IN_PROGRESS project after verified review approval."""
+        if owner.role != UserRole.OWNER:
+            raise ForbiddenError("Only OWNER accounts may complete projects.")
+        project = await self.project_repo.get_by_id(project_id, include_relations=True)
+        if project is None:
+            raise ProjectNotFoundError()
+        if project.owner_id != owner.id:
+            raise ForbiddenError("Only the project owner may complete this project.")
+
+        now = utc_now()
+        self.state_service.complete_project(project, approval_verified=approval_verified, now=now)
+        active_assignment = self._find_active_assignment(project)
+        if active_assignment is not None:
+            active_assignment.status = AssignmentStatus.COMPLETED
+            active_assignment.updated_at = now
+        await self.session.commit()
+        updated = await self.project_repo.get_by_id(project_id, include_relations=True)
+        assert updated is not None
+        logger.info(
+            "Project marked COMPLETED",
+            extra={
+                "event": "project_completed",
+                "user_id": str(owner.id),
+                "role": owner.role.value,
+                "project_id": str(updated.id),
+            },
+        )
+        return self._to_project_response(updated, viewer=owner)
+
     @classmethod
     def _enforce_read_access(cls, *, project: Project, viewer: AuthenticatedUser) -> None:
         if viewer.role == UserRole.ADMIN:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -206,6 +206,18 @@ class ProjectUpdateRequest(BaseModel):
             if getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null.")
         return self
+
+
+class WorkflowTransitionRequest(BaseModel):
+    """Service-coordinated project lifecycle transition payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_status: Literal["IN_PROGRESS", "CHANGES_REQUESTED", "COMPLETED"]
+    approval_verified: bool = Field(
+        default=False,
+        description="Required True when transitioning to COMPLETED after verified review approval.",
+    )
 
 
 class ProjectResponse(BaseModel):
