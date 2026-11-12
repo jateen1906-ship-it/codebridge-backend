@@ -32,6 +32,8 @@ services:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PORT: 8000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
       IDENTITY_SERVICE_URL: http://identity-service:8001
       PROJECT_SERVICE_URL: http://project-service:8002
       GITHUB_SERVICE_URL: http://github-service:8003
